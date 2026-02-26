@@ -1,0 +1,4 @@
+deen_cli.egg-info
+.venv
+*__pycache__
+junk

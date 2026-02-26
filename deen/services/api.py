@@ -1,4 +1,4 @@
-"""Unified API client with config-driven endpoints - FIXED CIRCULAR IMPORT"""
+"""Unified API client with config-driven endpoints - NO circular imports"""
 import httpx
 from typing import Dict, Optional
 import logging
@@ -137,10 +137,9 @@ class ApiService:
     def _get_fallback_content(self, content_type: str) -> Optional[Dict]:
         """
         Get authenticated fallback content from database.
-        FIXED: Import get_db LOCALLY to avoid circular import at module level.
+        LOCAL IMPORT to avoid circular dependency at module level.
         """
         try:
-            # LOCAL IMPORT to break circular dependency
             from ..database import get_db
             
             with get_db() as conn:

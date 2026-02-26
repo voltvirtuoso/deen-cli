@@ -60,74 +60,98 @@ def init():
             console.print("[yellow]⚠️  Using London as fallback[/yellow]")
             location, latitude, longitude = "London", 51.5074, -0.1278
     
-    # Fetch calculation methods from API
+    # Fetch calculation methods with location hint
     console.print("\n[dim]🕌 Fetching prayer calculation methods...[/dim]")
     metadata = MetadataService(config)
-    methods = metadata.get_calculation_methods()
+    methods = metadata.get_calculation_methods(location)
     
     if not methods:
-        console.print("[yellow]⚠️  Could not fetch methods. Using defaults.[/yellow]")
+        console.print("[yellow]⚠️  Could not fetch methods. Using regional defaults.[/yellow]")
+        # Create minimal defaults based on location
+        default_method_id = metadata.get_smart_default_method(location)
         methods = [
-            {"id": "2", "name": "Islamic Society of North America (ISNA)"},
-            {"id": "4", "name": "Muslim World League (MWL)"},
-            {"id": "5", "name": "Egyptian General Authority"},
-            {"id": "3", "name": "Umm al-Qura University (Saudi Arabia)"},
-            {"id": "1", "name": "University of Islamic Sciences, Karachi"}
+            {"id": "1", "name": "University of Islamic Sciences, Karachi", "region": "🇵🇰 Pakistan", "is_default_for": ["pakistan"]},
+            {"id": "2", "name": "Islamic Society of North America (ISNA)", "region": "🇺🇸 North America", "is_default_for": ["usa", "canada"]},
+            {"id": "3", "name": "Muslim World League", "region": "🌍 Global", "is_default_for": ["global"]},
+            {"id": "4", "name": "Umm Al-Qura University, Makkah", "region": "🇸🇦 Saudi Arabia", "is_default_for": ["saudi arabia"]},
+            {"id": "5", "name": "Egyptian General Authority", "region": "🇪🇬 Egypt", "is_default_for": ["egypt"]}
         ]
+        # Sort with location-relevant method first
+        methods.sort(key=lambda x: 0 if any(r in location.lower() for r in x["is_default_for"]) else 1)
     
     # Display methods table
     table = Table(title="Prayer Calculation Methods", show_header=True, header_style="bold")
-    table.add_column("ID", style="cyan", width=4)
-    table.add_column("Method", style="green")
-    table.add_column("Region", style="dim")
+    table.add_column("ID", style="cyan", width=4, justify="right")
+    table.add_column("Method", style="green", no_wrap=False)
+    table.add_column("Region", style="dim", width=20)
     
     method_ids = []
     for m in methods:
-        table.add_row(m["id"], m["name"], m.get("country", "Global"))
+        # Highlight default method with emoji
+        is_default = any(r in location.lower() for r in m.get("is_default_for", []))
+        id_display = f"{m['id']} {'⭐' if is_default else ''}"
+        table.add_row(id_display, m["name"], m["region"])
         method_ids.append(m["id"])
     
     console.print(table)
     
-    # Smart default based on location
-    location_lower = location.lower()
-    default_id = "1" if any(x in location_lower for x in ["pakistan", "karachi", "lahore"]) else "2"
+    # Get smart default based on location
+    smart_default = metadata.get_smart_default_method(location)
+    console.print(f"\n[dim]💡 Smart default for {location}: Method {smart_default}[/dim]")
+    
     method_id = Prompt.ask(
         "[bold]Select method ID[/bold]",
         choices=method_ids,
-        default=default_id
+        default=smart_default
     )
     
-    # Fetch schools/madhabs from API
+    # Special handling for Method 99 (custom)
+    if method_id == "99":
+        console.print("\n[bold yellow]⚠️  Method 99: Custom Parameters[/bold yellow]")
+        console.print("[dim]This advanced method lets you define custom angles for Fajr/Isha calculations.")
+        console.print("Only use if you understand prayer time calculation parameters.")
+        console.print("Most users should select a standard method (1-5) based on their region.[/dim]")
+        if not Confirm.ask("Continue with custom method?", default=False):
+            # Re-prompt for method selection excluding 99
+            filtered_ids = [m for m in method_ids if m != "99"]
+            method_id = Prompt.ask("[bold]Select standard method ID[/bold]", choices=filtered_ids, default=smart_default)
+    
+    # Fetch schools/madhabs
     console.print("\n[dim]📚 Fetching madhab options...[/dim]")
     schools = metadata.get_schools()
-    if not schools:
-        schools = [
-            {"id": "0", "name": "Shafi'i, Maliki, Hanbali (Standard)"},
-            {"id": "1", "name": "Hanafi"}
-        ]
+    school_ids = [s["id"] for s in schools]
     
     school_table = Table(title="Madhab (School of Thought)", show_header=True, header_style="bold")
-    school_table.add_column("ID", style="cyan", width=4)
+    school_table.add_column("ID", style="cyan", width=4, justify="right")
     school_table.add_column("School", style="green")
     
-    school_ids = []
     for s in schools:
         school_table.add_row(s["id"], s["name"])
-        school_ids.append(s["id"])
     
     console.print(school_table)
-    school_id = Prompt.ask("[bold]Select madhab ID[/bold]", choices=school_ids, default="0")
+    
+    # Smart madhab default
+    smart_school = metadata.get_smart_default_school(location)
+    console.print(f"\n[dim]💡 Smart default for {location}: Madhab {smart_school}[/dim]")
+    
+    school_id = Prompt.ask(
+        "[bold]Select madhab ID[/bold]",
+        choices=school_ids,
+        default=smart_school
+    )
     
     # User name
     name = Prompt.ask("\n[bold]Your name[/bold]", default="Brother/Sister")
     
-    # Save config
+    # Save config - ensure proper types (no None values)
     config.set("user.name", name)
     config.set("user.location", location)
-    config.set("user.latitude", latitude)
-    config.set("user.longitude", longitude)
-    config.set("prayer.calculation_method", method_id)
-    config.set("prayer.school", school_id)
+    if latitude is not None:
+        config.set("user.latitude", float(latitude))
+    if longitude is not None:
+        config.set("user.longitude", float(longitude))
+    config.set("prayer.calculation_method", str(method_id))
+    config.set("prayer.school", str(school_id))
     
     # Init DB
     console.print("\n[dim]💾 Initializing database...[/dim]")

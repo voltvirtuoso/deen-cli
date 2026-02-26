@@ -20,7 +20,7 @@ class DeenConfig:
         self._setup_logging()
     
     def _load_or_create(self) -> Dict[str, Any]:
-        """Load config or create with defaults"""
+        """Load config or create with defaults (TOML-safe - no None values)"""
         if self.config_path.exists():
             with open(self.config_path, "rb") as f:
                 return tomli.load(f)
@@ -90,14 +90,24 @@ class DeenConfig:
         return value
     
     def set(self, path: str, value):
-        """Set config value using dot notation"""
+        """Set config value using dot notation (ensures TOML-safe types)"""
         keys = path.split(".")
         target = self._config
         for key in keys[:-1]:
             if key not in target:
                 target[key] = {}
             target = target[key]
-        target[keys[-1]] = value
+        
+        # Convert to TOML-safe type
+        if value is None:
+            return  # Skip None values (TOML doesn't support null)
+        elif isinstance(value, float):
+            target[keys[-1]] = value
+        elif isinstance(value, bool):
+            target[keys[-1]] = value
+        else:
+            target[keys[-1]] = str(value)
+        
         self._save()
     
     def _save(self):

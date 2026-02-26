@@ -1,4 +1,4 @@
-"""Unified API client with config-driven endpoints - NO circular imports"""
+"""Unified API client with config-driven endpoints - NO 404 errors"""
 import httpx
 from typing import Dict, Optional
 import logging
@@ -56,48 +56,78 @@ class ApiService:
             return self._get_fallback_content("ayah")
     
     def fetch_random_hadith(self) -> Optional[Dict]:
-        """Fetch random hadith from hadithapi.pages.dev"""
+        """
+        Fetch random hadith DIRECTLY from authenticated static CDN (no 404s).
+        Source: https://github.com/fawazahmed0/hadith-api (Sahih Sitta only)
+        """
         try:
-            base_url = self.config.get("api.hadith_base_url")
             collections = ["bukhari", "muslim", "tirmidhi", "nasai", "abudawud", "ibnmajah"]
             collection = random.choice(collections)
             
-            # Try modern /hadith/{collection}/random endpoint first
-            try:
-                resp = httpx.get(
-                    f"{base_url}/hadith/{collection}/random",
-                    headers={"User-Agent": "deen-cli/0.1"},
-                    timeout=self.timeout
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                hadith_data = data.get("hadith", {})
-            except (httpx.HTTPError, KeyError, ValueError):
-                # Fallback to /collections/{collection}/random
-                resp = httpx.get(
-                    f"{base_url}/collections/{collection}/random",
-                    headers={"User-Agent": "deen-cli/0.1"},
-                    timeout=self.timeout
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                hadith_data = data.get("hadith", {})
+            # ✅ CORRECT APPROACH: Fetch entire collection from static CDN
+            # No proxy, no /random endpoint needed - just parse the JSON
+            resp = httpx.get(
+                f"https://cdn.jsdelivr.net/gh/fawazahmed0/hadith-api@1/editions/eng-{collection}.json",
+                timeout=self.timeout,
+                headers={"User-Agent": "deen-cli/0.1"}
+            )
+            resp.raise_for_status()
+            data = resp.json()
             
-            if not hadith_data.get("text"):
-                raise ValueError("Empty hadith response")
+            # Extract hadiths (handle nested chapter structure)
+            hadiths = []
+            raw_items = data.get("hadiths", [])
             
-            grade = hadith_data.get("grade") or ("Sahih" if collection in ["bukhari", "muslim"] else "Hasan")
+            for item in raw_items:
+                # Handle chapter structure: { "chapter": "...", "hadiths": [...] }
+                if isinstance(item, dict) and "hadiths" in item:
+                    hadiths.extend(item["hadiths"])
+                # Handle direct list of hadiths
+                elif isinstance(item, list):
+                    hadiths.extend(item)
+                # Handle single hadith object
+                else:
+                    hadiths.append(item)
+            
+            if not hadiths:
+                raise ValueError(f"No hadiths found in {collection} collection")
+            
+            # Pick random hadith
+            h = random.choice(hadiths)
+            
+            # Extract fields with robust fallbacks
+            hadith_number = (
+                h.get("hadithnumber") or 
+                h.get("hadithNumber") or 
+                str(h.get("number", "N/A"))
+            )
+            text = h.get("text", "Hadith text unavailable")
+            narrator = h.get("narrator", "Unknown narrator")
+            
+            # Determine grade based on collection + explicit grade field
+            explicit_grade = h.get("grade", "").strip().lower()
+            if "sahih" in explicit_grade:
+                grade = "Sahih"
+            elif "hasan" in explicit_grade:
+                grade = "Hasan"
+            elif collection in ["bukhari", "muslim"]:
+                grade = "Sahih"  # Bukhari/Muslim are universally accepted as Sahih
+            else:
+                grade = "Hasan"  # Other Sahih Sitta collections
+            
+            reference = f"{collection.title().replace('Ibnmajah', 'Ibn Majah')} {hadith_number}"
             
             return {
-                "id": hadith_data.get("id", "N/A"),
+                "id": hadith_number,
                 "collection": collection,
-                "text": hadith_data.get("text", "Hadith text unavailable"),
-                "narrator": hadith_data.get("narrator", "Unknown narrator"),
+                "text": text,
+                "narrator": narrator,
                 "grade": grade,
-                "reference": hadith_data.get("reference", f"{collection.title()} {hadith_data.get('id', 'N/A')}")
+                "reference": reference
             }
+            
         except Exception as e:
-            logger.warning(f"Hadith API error: {e}")
+            logger.warning(f"Hadith fetch error: {e}")
             return self._get_fallback_content("hadith")
     
     def fetch_prayer_times(self, lat: float, lon: float, date: str) -> Optional[Dict]:
@@ -137,7 +167,7 @@ class ApiService:
     def _get_fallback_content(self, content_type: str) -> Optional[Dict]:
         """
         Get authenticated fallback content from database.
-        LOCAL IMPORT to avoid circular dependency at module level.
+        LOCAL IMPORT to avoid circular dependency.
         """
         try:
             from ..database import get_db

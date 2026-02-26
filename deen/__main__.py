@@ -177,11 +177,12 @@ def init():
 
 @app.command()
 def inspire(
-    content_type: str = typer.Option("hadith", "--type", "-t", help="Content type: ayah, hadith"),
-    mood: str = typer.Option(None, "--mood", "-m", help="Emotional state (API-driven content)"),
+    content_type: str = typer.Option("hadith", "--type", "-t", help="Content type: ayah, hadith, dua"),
+    mood: str = typer.Option(None, "--mood", "-m", help="Emotional state: stressed, anxious, grateful, sad, angry, lonely, tired, doubtful"),
+    category: str = typer.Option(None, "--category", "-c", help="Dua category: morning, evening, dhikr, protection, sleep"),
     fresh: bool = typer.Option(False, "--fresh", "-f", help="Get fresh content")
 ):
-    """Get spiritual inspiration (100% API-driven, zero hardcoded content)"""
+    """Get spiritual inspiration (API-driven with authenticated fallbacks)"""
     config = DeenConfig()
     if not config.is_initialized:
         console.print("[red]✗ Run 'deen init' first[/red]")
@@ -189,7 +190,12 @@ def inspire(
     
     try:
         engine = ContentEngine()
-        engine.display_content(content_type=content_type, force_fresh=fresh, mood=mood)
+        engine.display_content(
+            content_type=content_type,
+            category=category,
+            force_fresh=fresh,
+            mood=mood
+        )
     except Exception as e:
         console.print(f"[red]✗ Error: {e}[/red]", err=True)
         raise typer.Exit(1)

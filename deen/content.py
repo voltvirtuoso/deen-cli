@@ -66,6 +66,25 @@ class ContentEngine:
             "transliteration": hadith["narrator"]
         }
     
+    def get_random_dua(self, category: Optional[str] = None) -> Dict:
+        """Get authenticated dua from offline fallbacks (Hisn al-Muslim)"""
+        dua = self.api.fetch_random_dua(category=category)
+        if not dua:
+            dua = {
+                "arabic": "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
+                "translation": "In the name of Allah, the Entirely Merciful, the Especially Merciful.",
+                "source": "Quran 1:1",
+                "category": "general"
+            }
+        
+        return {
+            "arabic_text": self._create_rtl_text(dua["arabic"]),
+            "translation": dua["translation"],
+            "source": dua["source"],
+            "category": dua["category"],
+            "transliteration": self._simple_transliteration(dua["arabic"])
+        }
+    
     def display_content(self, content_type: str = "dua", category: Optional[str] = None, 
                        force_fresh: bool = False, mood: Optional[str] = None):
         """Render content with proper Rich formatting"""
@@ -92,7 +111,7 @@ class ContentEngine:
                 panel_content.append(content["arabic_text"])
                 panel_content.append("\n\n")
             
-            # CORRECT Rich syntax with proper closing tags
+            # ✅ FIXED: Use explicit style instead of markup strings
             grade_lower = content['grade'].lower()
             if "sahih" in grade_lower:
                 grade_style = "bold green"
@@ -101,10 +120,27 @@ class ContentEngine:
             else:
                 grade_style = "bold cyan"
             
-            panel_content.append(f"[{grade_style}]{content['grade']}[/{grade_style}]\n\n")  # ✅ FIXED SYNTAX
+            # Append grade with explicit style (NOT markup strings)
+            panel_content.append(content['grade'], style=grade_style)
+            panel_content.append("\n\n")
+            
             panel_content.append(f"\"{content['translation']}\"\n", style="italic")
             panel_content.append(f"\n— {content['source']}", style="dim")
             
             console.print(Panel(panel_content, title=title, border_style="yellow", expand=False))
         
-        console.print("\n[dim]💡 Sources: Quran.com API | hadithapi.pages.dev | Authenticated fallbacks[/dim]")
+        elif content_type == "dua":
+            content = self.get_random_dua(category=category)
+            cat_display = content['category'].title() if content['category'] else "General"
+            title = f"🤲 Dua ({cat_display}){' [FRESH]' if force_fresh else ''}"
+            
+            panel_content = Text()
+            panel_content.append(content["arabic_text"])
+            panel_content.append("\n\n")
+            panel_content.append(f"({content.get('transliteration', 'Transliteration')})\n\n", style="cyan")
+            panel_content.append(f"\"{content['translation']}\"\n", style="italic")
+            panel_content.append(f"— {content['source']}", style="dim")
+            
+            console.print(Panel(panel_content, title=title, border_style="green", expand=False))
+        
+        console.print("\n[dim]💡 Sources: Quran.com API | Authenticated Hadiths | Hisn al-Muslim Duas[/dim]")

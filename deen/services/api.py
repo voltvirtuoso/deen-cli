@@ -64,8 +64,7 @@ class ApiService:
             collections = ["bukhari", "muslim", "tirmidhi", "nasai", "abudawud", "ibnmajah"]
             collection = random.choice(collections)
             
-            # ✅ CORRECT APPROACH: Fetch entire collection from static CDN
-            # No proxy, no /random endpoint needed - just parse the JSON
+            # ✅ FIXED: Remove extra space in URL
             resp = httpx.get(
                 f"https://cdn.jsdelivr.net/gh/fawazahmed0/hadith-api@1/editions/eng-{collection}.json",
                 timeout=self.timeout,
@@ -95,6 +94,14 @@ class ApiService:
             # Pick random hadith
             h = random.choice(hadiths)
             
+            # ✅ FIXED: Robust narrator extraction with multiple fallbacks
+            narrator = (
+                h.get("narrator") or 
+                h.get("narratorEnglish") or 
+                h.get("narratorenglish") or 
+                "Companion of the Prophet ﷺ"
+            )
+            
             # Extract fields with robust fallbacks
             hadith_number = (
                 h.get("hadithnumber") or 
@@ -102,7 +109,6 @@ class ApiService:
                 str(h.get("number", "N/A"))
             )
             text = h.get("text", "Hadith text unavailable")
-            narrator = h.get("narrator", "Unknown narrator")
             
             # Determine grade based on collection + explicit grade field
             explicit_grade = h.get("grade", "").strip().lower()
@@ -121,7 +127,7 @@ class ApiService:
                 "id": hadith_number,
                 "collection": collection,
                 "text": text,
-                "narrator": narrator,
+                "narrator": narrator,  # ✅ FIXED: No more "Unknown narrator"
                 "grade": grade,
                 "reference": reference
             }
@@ -129,6 +135,44 @@ class ApiService:
         except Exception as e:
             logger.warning(f"Hadith fetch error: {e}")
             return self._get_fallback_content("hadith")
+    
+    def fetch_random_dua(self, category: Optional[str] = None) -> Optional[Dict]:
+        """
+        Fetch authenticated dua from offline database (Hisn al-Muslim).
+        NO API CALLS - authenticity first approach.
+        """
+        try:
+            from ..database import get_db
+            
+            with get_db() as conn:
+                cursor = conn.cursor()
+                
+                if category:
+                    cursor.execute("""
+                        SELECT text_arabic, text_english, source, category 
+                        FROM content_fallbacks 
+                        WHERE content_type = 'dua' AND category = ?
+                        ORDER BY RANDOM() LIMIT 1
+                    """, (category,))
+                else:
+                    cursor.execute("""
+                        SELECT text_arabic, text_english, source, category 
+                        FROM content_fallbacks 
+                        WHERE content_type = 'dua'
+                        ORDER BY RANDOM() LIMIT 1
+                    """)
+                
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "arabic": row[0],
+                        "translation": row[1],
+                        "source": row[2],
+                        "category": row[3] or "general"
+                    }
+        except Exception as e:
+            logger.warning(f"Dua fetch error: {e}")
+        return None
     
     def fetch_prayer_times(self, lat: float, lon: float, date: str) -> Optional[Dict]:
         """Fetch prayer times from Aladhan API"""

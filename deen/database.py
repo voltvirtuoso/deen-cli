@@ -238,26 +238,28 @@ def normalize_prayer_name(input_str: str) -> str:
 
 def get_today_prayer_status() -> dict:
     """Get today's prayer completion status: {prayer_name: bool}"""
-    today_start = datetime.combine(datetime.today(), datetime.min.time())
-    today_end = datetime.combine(datetime.today(), datetime.max.time())
+    # Simply get today's date string: "2026-02-27"
+    today_str = datetime.today().strftime('%Y-%m-%d')
     
     all_prayers = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
     
     with get_db() as conn:
         cursor = conn.cursor()
+        # We use the SQLite date() function on the timestamp column
         cursor.execute(f"""
             SELECT h.name 
             FROM commits c
             JOIN habits h ON c.habit_id = h.id
             WHERE h.name IN ({','.join(['?']*len(all_prayers))})
-            AND c.timestamp BETWEEN ? AND ?
-        """, (*all_prayers, today_start.isoformat(), today_end.isoformat()))
+            AND date(c.timestamp) = ?
+        """, (*all_prayers, today_str))
         
-        # Normalize to title case to match all_prayers list
         completed_rows = cursor.fetchall()
+        # Use .capitalize() to ensure "asr" matches "Asr"
         completed = {row[0].strip().capitalize() for row in completed_rows}
         
-        return {prayer: (prayer in completed) for prayer in all_prayers}
+        status_dict = {prayer: (prayer in completed) for prayer in all_prayers}
+        return status_dict
 
 def check_prayer_already_committed(prayer_name: str) -> bool:
     """Check if a prayer has already been committed today"""

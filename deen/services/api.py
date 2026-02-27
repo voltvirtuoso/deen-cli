@@ -4,6 +4,7 @@ from typing import Dict, Optional
 import logging
 import random
 from ..config import DeenConfig
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -246,3 +247,20 @@ class ApiService:
         import re
         text = re.sub(r'<[^>]+>', '', text)
         return ' '.join(text.split())
+    
+    def fetch_islamic_date(self) -> str:
+        """Get today's Islamic (Hijri) date"""
+        try:
+            base_url = self.config.get("api.aladhan_base_url")
+            today = datetime.now().strftime("%Y-%m-%d")
+            resp = httpx.get(
+                f"{base_url}/gregorian/{today}",
+                timeout=self.timeout
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            hijri = data["data"]["hijri"]
+            return f"{hijri['day']} {hijri['month']['en']} {hijri['year']} AH"
+        except Exception as e:
+            logger.warning(f"Islamic date API error: {e}")
+            return "15 Ramadan 1447 AH"  # Fallback

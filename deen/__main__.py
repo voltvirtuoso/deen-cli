@@ -266,7 +266,7 @@ def status():
             
             # Check completion status
             is_completed = prayer_status.get(prayer, False)
-            status_icon = "✓" if is_completed else " "
+            status_icon = "[bold green]✓[/bold green]" if is_completed else "[dim]○[/dim]"
             
             # Determine styling
             is_next = next_prayer and prayer == next_prayer[0]
@@ -313,7 +313,6 @@ def commit(
     if not config.is_initialized:
         console.print("[red]✗ Run 'deen init' first[/red]")
         raise typer.Exit(1)
-    
     try:
         # For salah type, we detect actual prayer from message
         if habit_type.lower() == "salah":
@@ -327,14 +326,14 @@ def commit(
             }
             habit_name = habit_map.get(habit_type.lower(), habit_type.capitalize())
         
-        commit_id = commit_habit(habit_name, message, makeup)
+        commit_id = commit_habit(habit_name, message, makeup, config=config)
         
         # Get actual habit name from DB to show correct icon
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT h.name FROM commits c 
-                JOIN habits h ON c.habit_id = h.id 
+                SELECT h.name FROM commits c
+                JOIN habits h ON c.habit_id = h.id
                 WHERE c.id = ?
             """, (commit_id,))
             actual_name = cursor.fetchone()[0]
@@ -352,7 +351,8 @@ def commit(
         makeup_badge = "[yellow](makeup)[/yellow]" if makeup else ""
         console.print(f"[green]✓[/green] {icon} {actual_name} committed! ID: [bold]{commit_id}[/bold] {makeup_badge}")
         console.print(f"   [dim]Note:[/dim] {message}")
-        
+    except ValueError as ve:
+        console.print(f"[yellow]⚠️  {ve}[/yellow]")
     except Exception as e:
         console.print(f"[red]✗ Commit failed: {e}[/red]")
         raise typer.Exit(1)

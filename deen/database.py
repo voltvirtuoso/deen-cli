@@ -3,6 +3,9 @@ from pathlib import Path
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, time
+from .config import DeenConfig
+from rich.prompt import Confirm
+from rich.console import Console
 
 def get_db_path() -> Path:
     """Get path to SQLite database"""
@@ -211,29 +214,67 @@ def normalize_prayer_name(input_str: str) -> str:
     
     return None  # Not a recognized prayer name
 
+# def get_today_prayer_status() -> dict:
+#     """Get today's prayer completion status: {prayer_name: bool}"""
+#     today_start = datetime.combine(datetime.today(), time.min)
+#     today_end = datetime.combine(datetime.today(), time.max)
+    
+#     with get_db() as conn:
+#         cursor = conn.cursor()
+#         cursor.execute("""
+#             SELECT h.name, COUNT(*) 
+#             FROM commits c
+#             JOIN habits h ON c.habit_id = h.id
+#             WHERE h.type = 'prayer' 
+#             AND c.timestamp BETWEEN ? AND ?
+#             GROUP BY h.name
+#         """, (today_start.isoformat(), today_end.isoformat()))
+        
+#         completed = {row[0]: True for row in cursor.fetchall()}
+        
+#         # Ensure all 5 prayers are in result
+#         all_prayers = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+#         return {prayer: (prayer in completed) for prayer in all_prayers}
+
 def get_today_prayer_status() -> dict:
     """Get today's prayer completion status: {prayer_name: bool}"""
-    today_start = datetime.combine(datetime.today(), time.min)
-    today_end = datetime.combine(datetime.today(), time.max)
+    today_start = datetime.combine(datetime.today(), datetime.min.time())
+    today_end = datetime.combine(datetime.today(), datetime.max.time())
+    
+    all_prayers = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
     
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT h.name, COUNT(*) 
+        cursor.execute(f"""
+            SELECT h.name 
             FROM commits c
             JOIN habits h ON c.habit_id = h.id
-            WHERE h.type = 'prayer' 
+            WHERE h.name IN ({','.join(['?']*len(all_prayers))})
             AND c.timestamp BETWEEN ? AND ?
-            GROUP BY h.name
-        """, (today_start.isoformat(), today_end.isoformat()))
+        """, (*all_prayers, today_start.isoformat(), today_end.isoformat()))
         
-        completed = {row[0]: True for row in cursor.fetchall()}
+        # Normalize to title case to match all_prayers list
+        completed_rows = cursor.fetchall()
+        completed = {row[0].strip().capitalize() for row in completed_rows}
         
-        # Ensure all 5 prayers are in result
-        all_prayers = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
         return {prayer: (prayer in completed) for prayer in all_prayers}
 
-def commit_habit(habit_name: str, note: str, is_makeup: bool = False) -> int:
+def check_prayer_already_committed(prayer_name: str) -> bool:
+    """Check if a prayer has already been committed today"""
+    today_start = datetime.combine(datetime.today(), datetime.min.time())
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM commits c
+            JOIN habits h ON c.habit_id = h.id
+            WHERE LOWER(h.name) = LOWER(?)
+            AND c.timestamp > ?
+        """, (prayer_name, today_start.isoformat()))
+        count = cursor.fetchone()[0]
+        return count > 0
+
+def commit_habit(habit_name: str, note: str, is_makeup: bool = False, config: DeenConfig = None) -> int:
     """Log a habit completion with intelligent prayer detection"""
     # For salah type, try to detect actual prayer from note
     if habit_name.lower() in ["salah", "prayer", "namaz"]:
@@ -242,17 +283,81 @@ def commit_habit(habit_name: str, note: str, is_makeup: bool = False) -> int:
             habit_name = detected
         else:
             # Default to current prayer time if detection fails
-            now = datetime.now().time()
-            if now < time(6, 0):
-                habit_name = "Fajr"
-            elif now < time(12, 0):
-                habit_name = "Dhuhr"
-            elif now < time(15, 30):
-                habit_name = "Asr"
-            elif now < time(18, 30):
-                habit_name = "Maghrib"
+            now = datetime.now()
+            current_time = now.strftime("%H:%M")
+            
+            # Get actual prayer times for today
+            if config:
+                from .services.api import ApiService
+                lat = config.get("user.latitude")
+                lon = config.get("user.longitude")
+                if lat and lon:
+                    api = ApiService(config)
+                    today = now.strftime("%Y-%m-%d")
+                    prayers = api.fetch_prayer_times(float(lat), float(lon), today)
+                    
+                    if prayers:
+                        # Find which prayer time we're currently in
+                        prayer_order = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+                        current_prayer = "Isha"  # default
+                        for i, prayer in enumerate(prayer_order):
+                            prayer_time = prayers.get(prayer)
+                            if prayer_time and current_time >= prayer_time:
+                                if i + 1 < len(prayer_order):
+                                    next_prayer_time = prayers.get(prayer_order[i + 1])
+                                    if next_prayer_time and current_time < next_prayer_time:
+                                        current_prayer = prayer
+                                        break
+                                else:
+                                    current_prayer = prayer
+                                    break
+                        habit_name = current_prayer
+                    else:
+                        # Fallback to hardcoded times if API fails
+                        now_time = now.time()
+                        if now_time < time(6, 0):
+                            habit_name = "Fajr"
+                        elif now_time < time(12, 0):
+                            habit_name = "Dhuhr"
+                        elif now_time < time(15, 30):
+                            habit_name = "Asr"
+                        elif now_time < time(18, 30):
+                            habit_name = "Maghrib"
+                        else:
+                            habit_name = "Isha"
+                else:
+                    # Fallback to hardcoded times
+                    now_time = now.time()
+                    if now_time < time(6, 0):
+                        habit_name = "Fajr"
+                    elif now_time < time(12, 0):
+                        habit_name = "Dhuhr"
+                    elif now_time < time(15, 30):
+                        habit_name = "Asr"
+                    elif now_time < time(18, 30):
+                        habit_name = "Maghrib"
+                    else:
+                        habit_name = "Isha"
             else:
-                habit_name = "Isha"
+                # Fallback to hardcoded times
+                now_time = now.time()
+                if now_time < time(6, 0):
+                    habit_name = "Fajr"
+                elif now_time < time(12, 0):
+                    habit_name = "Dhuhr"
+                elif now_time < time(15, 30):
+                    habit_name = "Asr"
+                elif now_time < time(18, 30):
+                    habit_name = "Maghrib"
+                else:
+                    habit_name = "Isha"
+    
+    # Check if this prayer was already committed today
+    if habit_name in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]:
+        if check_prayer_already_committed(habit_name) and not is_makeup:
+            console = Console()
+            if not Confirm.ask(f"[yellow]⚠️  {habit_name} has already been committed today. Overwrite?[/yellow]"):
+                raise ValueError("Commit cancelled by user")
     
     # Get or create habit
     with get_db() as conn:

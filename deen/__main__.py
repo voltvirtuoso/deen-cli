@@ -3,6 +3,7 @@
 import typer
 from datetime import datetime
 from .services.api import ApiService
+from .database import commit_habit, get_recent_commits, get_today_prayer_status, get_db
 
 from rich.console import Console
 from rich.prompt import Prompt, Confirm, IntPrompt
@@ -205,7 +206,7 @@ def inspire(
     
 @app.command()
 def status():
-    """Show prayer times and next prayer countdown"""
+    """Show prayer times with completion markers and next prayer countdown"""
     config = DeenConfig()
     if not config.is_initialized:
         console.print("[red]✗ Run 'deen init' first[/red]")
@@ -224,32 +225,54 @@ def status():
         today = datetime.now().strftime("%Y-%m-%d")
         prayers = api.fetch_prayer_times(float(lat), float(lon), today)
         
+        # Location-aware defaults if API fails
         if not prayers:
-            console.print("[yellow]⚠️  Could not fetch prayer times. Using defaults.[/yellow]")
-            prayers = {
-                "Fajr": "05:30", "Dhuhr": "13:15", "Asr": "16:45",
-                "Maghrib": "19:30", "Isha": "21:00"
-            }
+            location_lower = config.get("user.location", "").lower()
+            if any(x in location_lower for x in ["pakistan", "islamabad", "karachi", "lahore"]):
+                prayers = {
+                    "Fajr": "05:17", "Sunrise": "06:39", "Dhuhr": "12:21",
+                    "Asr": "15:33", "Maghrib": "18:02", "Isha": "19:25"
+                }
+            else:
+                prayers = {
+                    "Fajr": "05:30", "Sunrise": "06:45", "Dhuhr": "13:15",
+                    "Asr": "16:45", "Maghrib": "19:30", "Isha": "21:00"
+                }
+            console.print("[yellow]⚠️  Using fallback prayer times (API unavailable)[/yellow]")
+        
+        # Get today's prayer completion status
+        prayer_status = get_today_prayer_status()
         
         # Calculate next prayer
         now = datetime.now()
         current_time = now.strftime("%H:%M")
         next_prayer = None
         for prayer, time_str in prayers.items():
-            if time_str > current_time:
-                next_prayer = (prayer, time_str)
-                break
+            if prayer not in ["Sunrise"]:  # Skip non-obligatory prayers
+                if time_str > current_time:
+                    next_prayer = (prayer, time_str)
+                    break
         
-        # Build prayer table
+        # Build prayer table with completion markers
         from rich.table import Table
         table = Table(show_header=False, box=None)
-        table.add_column(style="cyan")
-        table.add_column(style="green", justify="right")
+        table.add_column(style="cyan", width=12)
+        table.add_column(style="green", justify="right", width=8)
         
         for prayer, time_str in prayers.items():
+            # Skip non-obligatory prayers in main display
+            if prayer == "Sunrise":
+                continue
+            
+            # Check completion status
+            is_completed = prayer_status.get(prayer, False)
+            status_icon = "✓" if is_completed else " "
+            
+            # Determine styling
             is_next = next_prayer and prayer == next_prayer[0]
-            prayer_display = f"[bold]{prayer}[/bold]" if is_next else prayer
+            prayer_display = f"[bold]{prayer} {status_icon}[/bold]" if is_next else f"{prayer} {status_icon}"
             time_display = f"[bold green]{time_str}[/bold green]" if is_next else time_str
+            
             table.add_row(prayer_display, time_display)
         
         # Show countdown if next prayer exists
@@ -271,17 +294,18 @@ def status():
         ))
         
         console.print("\n[dim]Commands:[/dim]")
-        console.print("  • [cyan]deen inspire --type hadith[/cyan] → Get spiritual content")
+        console.print("  • [cyan]deen commit -t salah -m 'on time'[/cyan] → Log current prayer")
+        console.print("  • [cyan]deen commit -t salah -m 'Dhuhr'[/cyan] → Log specific prayer")
+        console.print("  • [cyan]deen log[/cyan] → View recent activity")
         
     except Exception as e:
-        # ✅ FIXED: Removed invalid 'err=True' parameter
         console.print(f"[red]✗ Error: {e}[/red]")
         raise typer.Exit(1)
 
 @app.command()
 def commit(
     habit_type: str = typer.Option("quran", "--type", "-t", help="Habit type: salah, quran, dhikr, fasting, custom"),
-    message: str = typer.Option(..., "--message", "-m", help="Commit message (e.g., 'Fajr on time', 'Juz 1')"),
+    message: str = typer.Option(..., "--message", "-m", help="Commit message (e.g., 'on time', 'Juz 1')"),
     makeup: bool = typer.Option(False, "--makeup", help="Mark as makeup prayer/habit")
 ):
     """Log a spiritual habit completion (Git-style)"""
@@ -291,23 +315,46 @@ def commit(
         raise typer.Exit(1)
     
     try:
-        # Map shorthand to habit name
-        habit_map = {
-            "salah": "Fajr",  # Default to Fajr; could enhance later to detect current prayer time
-            "quran": "Quran",
-            "dhikr": "Dhikr",
-            "fasting": "Fasting"
-        }
-        habit_name = habit_map.get(habit_type.lower(), habit_type.capitalize())
+        # For salah type, we detect actual prayer from message
+        if habit_type.lower() == "salah":
+            habit_name = "salah"  # Will be resolved in commit_habit()
+        else:
+            # Map other types to habit names
+            habit_map = {
+                "quran": "Quran",
+                "dhikr": "Dhikr",
+                "fasting": "Fasting"
+            }
+            habit_name = habit_map.get(habit_type.lower(), habit_type.capitalize())
         
         commit_id = commit_habit(habit_name, message, makeup)
-        icon = "🌙" if habit_type == "salah" else "📖" if habit_type == "quran" else "🕌"
+        
+        # Get actual habit name from DB to show correct icon
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT h.name FROM commits c 
+                JOIN habits h ON c.habit_id = h.id 
+                WHERE c.id = ?
+            """, (commit_id,))
+            actual_name = cursor.fetchone()[0]
+        
+        # Set icon based on actual habit
+        if actual_name in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]:
+            icon = "🕌"
+        elif actual_name == "Quran":
+            icon = "📖"
+        elif actual_name == "Dhikr":
+            icon = "🤲"
+        else:
+            icon = "✨"
+        
         makeup_badge = "[yellow](makeup)[/yellow]" if makeup else ""
-        console.print(f"[green]✓[/green] {icon} Habit committed! ID: [bold]{commit_id}[/bold] {makeup_badge}")
-        console.print(f"   [dim]{habit_name}:[/dim] {message}")
+        console.print(f"[green]✓[/green] {icon} {actual_name} committed! ID: [bold]{commit_id}[/bold] {makeup_badge}")
+        console.print(f"   [dim]Note:[/dim] {message}")
         
     except Exception as e:
-        console.print(f"[red]✗ Commit failed: {e}[/red]", err=True)
+        console.print(f"[red]✗ Commit failed: {e}[/red]")
         raise typer.Exit(1)
 
 @app.command()
@@ -328,7 +375,10 @@ def log(
             return
         
         from rich.table import Table
-        table = Table(title=f"Recent Habits (Last {days} days)", box="ROUNDED")
+        from rich.markup import escape
+        from rich import box
+        
+        table = Table(title=f"Recent Habits (Last {days} days)", box=box.ROUNDED)
         table.add_column("ID", style="cyan", no_wrap=True)
         table.add_column("Time", style="dim")
         table.add_column("Habit", style="green")
@@ -336,19 +386,33 @@ def log(
         table.add_column("Type", justify="center")
         
         for c in commits:
-            makeup_badge = "[yellow]ᴹ[/yellow]" if c[4] else ""
+            # ✅ FIXED: Safe datetime parsing for Windows
+            try:
+                timestamp = datetime.fromisoformat(c[1])
+            except (ValueError, TypeError):
+                # Fallback for Windows timezone format quirks
+                timestamp_str = str(c[1]).split('.')[0].split('+')[0]
+                timestamp = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S")
+            
+            time_str = timestamp.strftime("%Y-%m-%d %H:%M")
+            
+            # ✅ FIXED: Replace problematic superscript ᴹ with plain (M)
+            makeup_badge = "(M)" if c[4] else ""
+            
+            # ✅ FIXED: Escape user content to prevent Rich markup errors
             table.add_row(
                 str(c[0]),
-                datetime.fromisoformat(c[1]).strftime("%Y-%m-%d %H:%M"),
-                c[2],
-                c[3],
+                time_str,
+                escape(str(c[2])),  # Habit name
+                escape(str(c[3])),  # Note/message
                 makeup_badge
             )
         
         console.print(table)
         
     except Exception as e:
-        console.print(f"[red]✗ Error fetching log: {e}[/red]", err=True)
+        console.print_exception()
+        console.print(f"[red]✗ Error fetching log: {e}[/red]")  # ✅ Removed err=True
         raise typer.Exit(1)
 
 @app.callback(invoke_without_command=True)
@@ -363,6 +427,9 @@ def main(ctx: typer.Context):
         console.print("[bold green]deen-cli[/bold green] — Version Control for Your Deeds")
         console.print("\n[bold]Commands:[/bold]")
         console.print("  init     → Setup configuration")
+        console.print("  status   → Prayer times & habit summary")
+        console.print("  commit   → Log habit completion")
+        console.print("  log      → View habit history")
         console.print("  inspire  → Get spiritual content")
         console.print("\n[dim]'deen COMMAND --help' for details[/dim]")
 

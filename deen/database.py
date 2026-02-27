@@ -2,7 +2,7 @@
 from pathlib import Path
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 
 def get_db_path() -> Path:
     """Get path to SQLite database"""
@@ -125,17 +125,6 @@ def get_habit_id(name: str) -> int:
         cursor.execute("INSERT INTO habits (name, type) VALUES (?, 'custom')", (name,))
         return cursor.lastrowid
 
-def commit_habit(habit_name: str, note: str, is_makeup: bool = False) -> int:
-    """Log a habit completion"""
-    habit_id = get_habit_id(habit_name)
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO commits (habit_id, note, is_makeup) VALUES (?, ?, ?)",
-            (habit_id, note, int(is_makeup))
-        )
-        return cursor.lastrowid
-
 def get_recent_commits(days: int = 7) -> list:
     """Get commits from last N days"""
     since = datetime.now() - timedelta(days=days)
@@ -165,6 +154,124 @@ def get_today_prayer_count() -> dict:
         """, (today_start.isoformat(),))
         rows = cursor.fetchall()
         return {row[0]: row[1] for row in rows}
+    
+def get_habit_id(name: str) -> int:
+    """Get habit ID by name (case-insensitive)"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM habits WHERE LOWER(name) = LOWER(?)", (name,))
+        row = cursor.fetchone()
+        if row:
+            return row[0]
+        # If not found, create custom habit
+        cursor.execute("INSERT INTO habits (name, type) VALUES (?, 'custom')", (name,))
+        conn.commit()
+        return cursor.lastrowid
+
+def get_recent_commits(days: int = 7) -> list:
+    """Get commits from last N days"""
+    since = datetime.now() - timedelta(days=days)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT c.id, c.timestamp, h.name, c.note, c.is_makeup
+            FROM commits c
+            JOIN habits h ON c.habit_id = h.id
+            WHERE c.timestamp > ?
+            ORDER BY c.timestamp DESC
+        """, (since.isoformat(),))
+        return cursor.fetchall()
+    
+def normalize_prayer_name(input_str: str) -> str:
+    """
+    Map prayer name variations to canonical names.
+    Returns canonical name or None if not recognized.
+    """
+    input_lower = input_str.strip().lower()
+    
+    # Fajr variations
+    if any(x in input_lower for x in ["fajr", "fajar", "sehri", "suhur", "morning"]):
+        return "Fajr"
+    
+    # Dhuhr variations
+    if any(x in input_lower for x in ["dhuhr", "duhr", "zuhr", "zohr", "zuhar", "duhar", "midday", "noon"]):
+        return "Dhuhr"
+    
+    # Asr variations
+    if any(x in input_lower for x in ["asr", "asar", "afternoon"]):
+        return "Asr"
+    
+    # Maghrib variations
+    if any(x in input_lower for x in ["maghrib", "magrib", "sunset", "evening"]):
+        return "Maghrib"
+    
+    # Isha variations
+    if any(x in input_lower for x in ["isha", "isha", "night", "ishaa"]):
+        return "Isha"
+    
+    return None  # Not a recognized prayer name
+
+def get_today_prayer_status() -> dict:
+    """Get today's prayer completion status: {prayer_name: bool}"""
+    today_start = datetime.combine(datetime.today(), time.min)
+    today_end = datetime.combine(datetime.today(), time.max)
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT h.name, COUNT(*) 
+            FROM commits c
+            JOIN habits h ON c.habit_id = h.id
+            WHERE h.type = 'prayer' 
+            AND c.timestamp BETWEEN ? AND ?
+            GROUP BY h.name
+        """, (today_start.isoformat(), today_end.isoformat()))
+        
+        completed = {row[0]: True for row in cursor.fetchall()}
+        
+        # Ensure all 5 prayers are in result
+        all_prayers = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+        return {prayer: (prayer in completed) for prayer in all_prayers}
+
+def commit_habit(habit_name: str, note: str, is_makeup: bool = False) -> int:
+    """Log a habit completion with intelligent prayer detection"""
+    # For salah type, try to detect actual prayer from note
+    if habit_name.lower() in ["salah", "prayer", "namaz"]:
+        detected = normalize_prayer_name(note)
+        if detected:
+            habit_name = detected
+        else:
+            # Default to current prayer time if detection fails
+            now = datetime.now().time()
+            if now < time(6, 0):
+                habit_name = "Fajr"
+            elif now < time(12, 0):
+                habit_name = "Dhuhr"
+            elif now < time(15, 30):
+                habit_name = "Asr"
+            elif now < time(18, 30):
+                habit_name = "Maghrib"
+            else:
+                habit_name = "Isha"
+    
+    # Get or create habit
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM habits WHERE LOWER(name) = LOWER(?)", (habit_name,))
+        row = cursor.fetchone()
+        if row:
+            habit_id = row[0]
+        else:
+            cursor.execute("INSERT INTO habits (name, type) VALUES (?, 'custom')", (habit_name,))
+            habit_id = cursor.lastrowid
+        
+        # Insert commit
+        cursor.execute(
+            "INSERT INTO commits (habit_id, note, is_makeup) VALUES (?, ?, ?)",
+            (habit_id, note, int(is_makeup))
+        )
+        conn.commit()
+        return cursor.lastrowid
 
 # Avoid circular import
 from .config import DeenConfig

@@ -176,12 +176,13 @@ class ApiService:
         return None
     
     def fetch_prayer_times(self, lat: float, lon: float, date: str) -> Optional[Dict]:
-        """Fetch prayer times from Aladhan API"""
+        """Fetch prayer times from Aladhan API with fallback method"""
         try:
             base_url = self.config.get("api.aladhan_base_url")
             method = self.config.get("prayer.calculation_method", "2")
             school = self.config.get("prayer.school", "0")
             
+            # Try primary method
             resp = httpx.get(
                 f"{base_url}/timings/{date}",
                 params={
@@ -206,8 +207,34 @@ class ApiService:
                 "Isha": timings["Isha"][:5]
             }
         except Exception as e:
-            logger.warning(f"Prayer times API error: {e}")
-            return None
+            # Try fallback method (MWL - method 3) if primary fails
+            try:
+                logger.warning(f"Primary prayer API failed ({e}), trying fallback...")
+                resp = httpx.get(
+                    f"{base_url}/timings/{date}",
+                    params={
+                        "latitude": lat,
+                        "longitude": lon,
+                        "method": "3",  # MWL fallback
+                        "school": school
+                    },
+                    headers={"User-Agent": "deen-cli/0.1"},
+                    timeout=self.timeout
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                timings = data["data"]["timings"]
+                return {
+                    "Fajr": timings["Fajr"][:5],
+                    "Sunrise": timings["Sunrise"][:5],
+                    "Dhuhr": timings["Dhuhr"][:5],
+                    "Asr": timings["Asr"][:5],
+                    "Maghrib": timings["Maghrib"][:5],
+                    "Isha": timings["Isha"][:5]
+                }
+            except Exception as fallback_e:
+                logger.warning(f"Prayer times API error (fallback failed): {fallback_e}")
+                return None
     
     def _get_fallback_content(self, content_type: str) -> Optional[Dict]:
         """

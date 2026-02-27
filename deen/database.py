@@ -262,8 +262,8 @@ def get_today_prayer_status() -> dict:
         return status_dict
 
 def check_prayer_already_committed(prayer_name: str) -> bool:
-    """Check if a prayer has already been committed today"""
-    today_start = datetime.combine(datetime.today(), datetime.min.time())
+    """Check if a prayer has already been committed today using strict date matching"""
+    today_str = datetime.today().strftime('%Y-%m-%d')
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -271,114 +271,170 @@ def check_prayer_already_committed(prayer_name: str) -> bool:
             FROM commits c
             JOIN habits h ON c.habit_id = h.id
             WHERE LOWER(h.name) = LOWER(?)
-            AND c.timestamp > ?
-        """, (prayer_name, today_start.isoformat()))
+            AND date(c.timestamp) = ?
+        """, (prayer_name, today_str))
         count = cursor.fetchone()[0]
         return count > 0
 
+# def commit_habit(habit_name: str, note: str, is_makeup: bool = False, config: DeenConfig = None) -> int:
+#     """Log a habit completion with intelligent prayer detection and overwrite capability"""
+    
+#     # 1. PRAYER DETECTION LOGIC
+#     # If the user typed 'salah', 'prayer', or 'namaz', we figure out which one
+#     if habit_name.lower() in ["salah", "prayer", "namaz"]:
+#         detected = normalize_prayer_name(note)
+#         if detected:
+#             habit_name = detected
+#         elif config:
+#             # Try to detect prayer based on current time and API/Location
+#             from .services.api import ApiService
+#             lat = config.get("user.latitude")
+#             lon = config.get("user.longitude")
+#             now = datetime.now()
+#             current_time = now.strftime("%H:%M")
+            
+#             if lat and lon:
+#                 api = ApiService(config)
+#                 today = now.strftime("%Y-%m-%d")
+#                 prayers = api.fetch_prayer_times(float(lat), float(lon), today)
+                
+#                 if prayers:
+#                     prayer_order = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+#                     current_prayer = "Isha" # Default
+#                     for i, prayer in enumerate(prayer_order):
+#                         prayer_time = prayers.get(prayer)
+#                         if prayer_time and current_time >= prayer_time:
+#                             if i + 1 < len(prayer_order):
+#                                 next_prayer_time = prayers.get(prayer_order[i + 1])
+#                                 if next_prayer_time and current_time < next_prayer_time:
+#                                     current_prayer = prayer
+#                                     break
+#                             else:
+#                                 current_prayer = prayer
+#                                 break
+#                     habit_name = current_prayer
+#                 else:
+#                     # Fallback to rough time estimates if API fails
+#                     now_time = now.time()
+#                     if now_time < time(6, 0): habit_name = "Fajr"
+#                     elif now_time < time(12, 0): habit_name = "Dhuhr"
+#                     elif now_time < time(15, 30): habit_name = "Asr"
+#                     elif now_time < time(18, 30): habit_name = "Maghrib"
+#                     else: habit_name = "Isha"
+#         else:
+#             # Final fallback to standard hours
+#             now_time = datetime.now().time()
+#             if now_time < time(6, 0): habit_name = "Fajr"
+#             elif now_time < time(12, 0): habit_name = "Dhuhr"
+#             elif now_time < time(15, 30): habit_name = "Asr"
+#             elif now_time < time(18, 30): habit_name = "Maghrib"
+#             else: habit_name = "Isha"
+
+#     # 2. OVERWRITE CHECK
+#     # Check if this specific prayer was already logged TODAY
+#     if habit_name in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]:
+#         if check_prayer_already_committed(habit_name) and not is_makeup:
+#             console = Console()
+#             if Confirm.ask(f"[yellow]⚠️  {habit_name} already logged for today. Overwrite with current time?[/yellow]"):
+#                 # Remove the old entry for today
+#                 today_str = datetime.today().strftime('%Y-%m-%d')
+#                 with get_db() as conn:
+#                     cursor = conn.cursor()
+#                     cursor.execute("""
+#                         DELETE FROM commits 
+#                         WHERE habit_id IN (SELECT id FROM habits WHERE name = ?)
+#                         AND date(timestamp) = ?
+#                     """, (habit_name, today_str))
+#                     conn.commit()
+#             else:
+#                 # If they say no, we abort the function
+#                 raise ValueError(f"Commit for {habit_name} cancelled by user.")
+
+#     # 3. DATABASE INSERTION
+#     # Get the ID (or create it if it's a custom habit)
+#     habit_id = get_habit_id(habit_name)
+    
+#     with get_db() as conn:
+#         cursor = conn.cursor()
+#         # We manually format the timestamp to ensure the "Space" separator 
+#         # instead of the ISO "T" for better SQLite date() compatibility
+#         timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+#         cursor.execute(
+#             "INSERT INTO commits (habit_id, note, is_makeup, timestamp) VALUES (?, ?, ?, ?)",
+#             (habit_id, note, int(is_makeup), timestamp_str)
+#         )
+#         conn.commit()
+#         return cursor.lastrowid
+
 def commit_habit(habit_name: str, note: str, is_makeup: bool = False, config: DeenConfig = None) -> int:
-    """Log a habit completion with intelligent prayer detection"""
-    # For salah type, try to detect actual prayer from note
+    """Log a habit completion with UPDATE logic to keep IDs consistent"""
+    
+    # 1. PRAYER DETECTION LOGIC (Same as before)
     if habit_name.lower() in ["salah", "prayer", "namaz"]:
         detected = normalize_prayer_name(note)
         if detected:
             habit_name = detected
-        else:
-            # Default to current prayer time if detection fails
+        elif config:
+            from .services.api import ApiService
+            lat, lon = config.get("user.latitude"), config.get("user.longitude")
             now = datetime.now()
-            current_time = now.strftime("%H:%M")
-            
-            # Get actual prayer times for today
-            if config:
-                from .services.api import ApiService
-                lat = config.get("user.latitude")
-                lon = config.get("user.longitude")
-                if lat and lon:
-                    api = ApiService(config)
-                    today = now.strftime("%Y-%m-%d")
-                    prayers = api.fetch_prayer_times(float(lat), float(lon), today)
-                    
-                    if prayers:
-                        # Find which prayer time we're currently in
-                        prayer_order = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
-                        current_prayer = "Isha"  # default
-                        for i, prayer in enumerate(prayer_order):
-                            prayer_time = prayers.get(prayer)
-                            if prayer_time and current_time >= prayer_time:
-                                if i + 1 < len(prayer_order):
-                                    next_prayer_time = prayers.get(prayer_order[i + 1])
-                                    if next_prayer_time and current_time < next_prayer_time:
-                                        current_prayer = prayer
-                                        break
-                                else:
+            if lat and lon:
+                api = ApiService(config)
+                prayers = api.fetch_prayer_times(float(lat), float(lon), now.strftime("%Y-%m-%d"))
+                if prayers:
+                    prayer_order = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+                    current_time = now.strftime("%H:%M")
+                    current_prayer = "Isha"
+                    for i, prayer in enumerate(prayer_order):
+                        p_time = prayers.get(prayer)
+                        if p_time and current_time >= p_time:
+                            if i + 1 < len(prayer_order):
+                                if current_time < prayers.get(prayer_order[i+1], "23:59"):
                                     current_prayer = prayer
                                     break
-                        habit_name = current_prayer
-                    else:
-                        # Fallback to hardcoded times if API fails
-                        now_time = now.time()
-                        if now_time < time(6, 0):
-                            habit_name = "Fajr"
-                        elif now_time < time(12, 0):
-                            habit_name = "Dhuhr"
-                        elif now_time < time(15, 30):
-                            habit_name = "Asr"
-                        elif now_time < time(18, 30):
-                            habit_name = "Maghrib"
-                        else:
-                            habit_name = "Isha"
-                else:
-                    # Fallback to hardcoded times
-                    now_time = now.time()
-                    if now_time < time(6, 0):
-                        habit_name = "Fajr"
-                    elif now_time < time(12, 0):
-                        habit_name = "Dhuhr"
-                    elif now_time < time(15, 30):
-                        habit_name = "Asr"
-                    elif now_time < time(18, 30):
-                        habit_name = "Maghrib"
-                    else:
-                        habit_name = "Isha"
-            else:
-                # Fallback to hardcoded times
-                now_time = now.time()
-                if now_time < time(6, 0):
-                    habit_name = "Fajr"
-                elif now_time < time(12, 0):
-                    habit_name = "Dhuhr"
-                elif now_time < time(15, 30):
-                    habit_name = "Asr"
-                elif now_time < time(18, 30):
-                    habit_name = "Maghrib"
-                else:
-                    habit_name = "Isha"
+                            else:
+                                current_prayer = prayer
+                                break
+                    habit_name = current_prayer
+
+    # 2. OVERWRITE CHECK USING UPDATE
+    today_str = datetime.today().strftime('%Y-%m-%d')
+    timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Check if this prayer was already committed today
-    if habit_name in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]:
-        if check_prayer_already_committed(habit_name) and not is_makeup:
-            console = Console()
-            if not Confirm.ask(f"[yellow]⚠️  {habit_name} has already been committed today. Overwrite?[/yellow]"):
-                raise ValueError("Commit cancelled by user")
-    
-    # Get or create habit
+    if habit_name in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"] and not is_makeup:
+        if check_prayer_already_committed(habit_name):
+            if Confirm.ask(f"[yellow]⚠️  {habit_name} already logged. Update existing record?[/yellow]"):
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    # Find the ID first to return it at the end
+                    cursor.execute("""
+                        SELECT c.id FROM commits c
+                        JOIN habits h ON c.habit_id = h.id
+                        WHERE h.name = ? AND date(c.timestamp) = ?
+                    """, (habit_name, today_str))
+                    row = cursor.fetchone()
+                    existing_id = row[0] if row else None
+                    
+                    if existing_id:
+                        cursor.execute("""
+                            UPDATE commits 
+                            SET timestamp = ?, note = ?
+                            WHERE id = ?
+                        """, (timestamp_str, note, existing_id))
+                        conn.commit()
+                        return existing_id
+
+    # 3. STANDARD INSERT (If no overwrite happened)
+    habit_id = get_habit_id(habit_name)
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM habits WHERE LOWER(name) = LOWER(?)", (habit_name,))
-        row = cursor.fetchone()
-        if row:
-            habit_id = row[0]
-        else:
-            cursor.execute("INSERT INTO habits (name, type) VALUES (?, 'custom')", (habit_name,))
-            habit_id = cursor.lastrowid
-        
-        # Insert commit
         cursor.execute(
-            "INSERT INTO commits (habit_id, note, is_makeup) VALUES (?, ?, ?)",
-            (habit_id, note, int(is_makeup))
+            "INSERT INTO commits (habit_id, note, is_makeup, timestamp) VALUES (?, ?, ?, ?)",
+            (habit_id, note, int(is_makeup), timestamp_str)
         )
         conn.commit()
         return cursor.lastrowid
-
+    
 # Avoid circular import
 from .config import DeenConfig

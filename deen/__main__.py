@@ -378,41 +378,40 @@ def log(
         from rich.markup import escape
         from rich import box
         
+        # 1. Removed "Type" column from title and initialization
         table = Table(title=f"Recent Habits (Last {days} days)", box=box.ROUNDED)
         table.add_column("ID", style="cyan", no_wrap=True)
         table.add_column("Time", style="dim")
         table.add_column("Habit", style="green")
         table.add_column("Message", overflow="fold")
-        table.add_column("Type", justify="center")
+        # --- Column Deleted Here ---
         
         for c in commits:
-            # ✅ FIXED: Safe datetime parsing for Windows
             try:
                 timestamp = datetime.fromisoformat(c[1])
             except (ValueError, TypeError):
-                # Fallback for Windows timezone format quirks
                 timestamp_str = str(c[1]).split('.')[0].split('+')[0]
-                timestamp = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S")
+                timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
             
             time_str = timestamp.strftime("%Y-%m-%d %H:%M")
             
-            # ✅ FIXED: Replace problematic superscript ᴹ with plain (M)
-            makeup_badge = "(M)" if c[4] else ""
+            # If it's a makeup, we can append (M) to the habit name instead 
+            # so you don't lose the info even without the Type column
+            habit_name = f"{c[2]} [yellow](M)[/yellow]" if c[4] else str(c[2])
             
-            # ✅ FIXED: Escape user content to prevent Rich markup errors
+            # 2. Removed the last argument (c[5] or makeup_badge) from add_row
             table.add_row(
                 str(c[0]),
                 time_str,
-                escape(str(c[2])),  # Habit name
-                escape(str(c[3])),  # Note/message
-                makeup_badge
+                escape(habit_name), # Combined Name + Makeup badge
+                escape(str(c[3]))   # Note/message
             )
         
         console.print(table)
         
     except Exception as e:
         console.print_exception()
-        console.print(f"[red]✗ Error fetching log: {e}[/red]")  # ✅ Removed err=True
+        console.print(f"[red]✗ Error fetching log: {e}[/red]")
         raise typer.Exit(1)
 
 @app.callback(invoke_without_command=True)

@@ -1,8 +1,10 @@
-"""Content engine with ZERO hardcoded religious content - API-driven only"""
+"""Content engine with API-driven content and correct RTL rendering."""
 from typing import Dict, Optional
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
+import arabic_reshaper
+from bidi.algorithm import get_display
 from .config import DeenConfig
 from .services.api import ApiService
 
@@ -13,35 +15,32 @@ class ContentEngine:
         self.config = DeenConfig()
         self.api = ApiService(self.config)
     
-    def _create_rtl_text(self, text: str) -> Text:
-        """Create right-aligned Arabic text"""
-        return Text(text, justify="right", style="bold")
+    def _prepare_arabic(self, text: str) -> str:
+        """Corrects Arabic string for display in LTR terminals."""
+        # 1. Reshape letters to join correctly (e.g., separate -> connected)
+        reshaped_text = arabic_reshaper.reshape(text)
+        # 2. Reorder characters for visual RTL rendering
+        return get_display(reshaped_text)
     
-    def _simple_transliteration(self, arabic: str) -> str:
-        """Basic transliteration (not used for religious content - just UX enhancement)"""
-        mapping = {'ا': 'a', 'ب': 'b', 'ت': 't', 'ث': 'th', 'ج': 'j', 'ح': 'h', 'خ': 'kh',
-                  'د': 'd', 'ذ': 'dh', 'ر': 'r', 'ز': 'z', 'س': 's', 'ش': 'sh', 'ص': 's',
-                  'ض': 'd', 'ط': 't', 'ظ': 'z', 'ع': 'a', 'غ': 'gh', 'ف': 'f', 'ق': 'q',
-                  'ك': 'k', 'ل': 'l', 'م': 'm', 'ن': 'n', 'ه': 'h', 'و': 'w', 'ي': 'y'}
-        return ''.join(mapping.get(c, c) for c in arabic if c not in 'ًٌٍَُِّْـٕٖٜٟٓٔٗ٘ٙٚٛٝٞ')
+    def _create_rtl_text(self, text: str) -> Text:
+        """Returns a Rich Text object ready for console display."""
+        return Text(self._prepare_arabic(text), justify="right", style="bold")
     
     def get_random_ayah(self, force_fresh: bool = False) -> Dict:
-        """Get ayah from API with authenticated fallback"""
-        ayah = self.api.fetch_random_ayah()
-        if not ayah:
-            ayah = {
-                "id": "112:1",
-                "arabic": "قُلْ هُوَ اللَّهُ أَحَدٌ",
-                "translation": "Say, 'He is Allah, [who is] One.'",
-                "surah_english": "Al-Ikhlas"
-            }
+        ayah = self.api.fetch_random_ayah() or {
+            "id": "112:1",
+            "arabic": "قُلْ هُوَ اللَّهُ أَحَدٌ",
+            "translation": "Say, 'He is Allah, [who is] One.'",
+            "surah_english": "Al-Ikhlas",
+            "transliteration": "Qul huwa Allahu Ahad"
+        }
         
         return {
             "id": ayah["id"],
             "arabic_text": self._create_rtl_text(ayah["arabic"]),
             "translation": ayah["translation"],
             "surah_english": ayah["surah_english"],
-            "transliteration": self._simple_transliteration(ayah["arabic"])
+            "transliteration": ayah.get("transliteration", "N/A")
         }
     
     def get_random_hadith(self, force_fresh: bool = False, mood: Optional[str] = None) -> Dict:
@@ -86,7 +85,7 @@ class ContentEngine:
         }
     
     def display_content(self, content_type: str = "dua", category: Optional[str] = None, 
-                       force_fresh: bool = False, mood: Optional[str] = None):
+                        force_fresh: bool = False, mood: Optional[str] = None):
         """Render content with proper Rich formatting"""
         if content_type == "ayah":
             content = self.get_random_ayah(force_fresh)

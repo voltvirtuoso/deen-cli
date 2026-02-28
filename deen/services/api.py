@@ -13,49 +13,75 @@ class ApiService:
         self.config = config
         self.timeout = config.get("api.timeout_seconds", 10)
     
+    # def fetch_random_ayah(self) -> Optional[Dict]:
+    #     """Fetch random ayah from Quran API"""
+    #     try:
+    #         base_url = self.config.get("api.quran_base_url")
+    #         translation_id = self.config.get("api.translation_id")
+            
+    #         resp = httpx.get(
+    #             f"{base_url}/verses/random",
+    #             params={
+    #                 "fields": "text_uthmani,verse_number,chapter_id",
+    #                 "translations": str(translation_id),
+    #                 "language": "en"
+    #             },
+    #             headers={"User-Agent": "deen-cli/0.1"},
+    #             timeout=self.timeout,
+    #             follow_redirects=True
+    #         )
+    #         resp.raise_for_status()
+    #         data = resp.json()
+            
+    #         verse = data["verse"]
+    #         translation = verse["translations"][0]["text"] if verse.get("translations") else "Translation unavailable"
+            
+    #         # Get surah name
+    #         surah_resp = httpx.get(
+    #             f"{base_url}/chapters/{verse['chapter_id']}",
+    #             timeout=5
+    #         )
+    #         surah_name = "Surah"
+    #         if surah_resp.status_code == 200:
+    #             surah_data = surah_resp.json()["chapter"]
+    #             surah_name = surah_data["translated_name"]["name"]
+            
+    #         return {
+    #             "id": f"{verse['chapter_id']}:{verse['verse_number']}",
+    #             "arabic": verse["text_uthmani"],
+    #             "translation": self._clean_html(translation),
+    #             "surah_english": surah_name
+    #         }
+    #     except Exception as e:
+    #         logger.warning(f"Quran API error: {e}")
+    #         return self._get_fallback_content("ayah")
+    
     def fetch_random_ayah(self) -> Optional[Dict]:
-        """Fetch random ayah from Quran API"""
         try:
             base_url = self.config.get("api.quran_base_url")
-            translation_id = self.config.get("api.translation_id")
-            
+            # Requesting multiple editions in one go
             resp = httpx.get(
-                f"{base_url}/verses/random",
-                params={
-                    "fields": "text_uthmani,verse_number,chapter_id",
-                    "translations": str(translation_id),
-                    "language": "en"
-                },
-                headers={"User-Agent": "deen-cli/0.1"},
-                timeout=self.timeout,
-                follow_redirects=True
+                f"{base_url}/ayah/random/editions/quran-uthmani,en.sahih,en.transliteration",
+                timeout=self.timeout
             )
             resp.raise_for_status()
-            data = resp.json()
+            data = resp.json()["data"]
             
-            verse = data["verse"]
-            translation = verse["translations"][0]["text"] if verse.get("translations") else "Translation unavailable"
-            
-            # Get surah name
-            surah_resp = httpx.get(
-                f"{base_url}/chapters/{verse['chapter_id']}",
-                timeout=5
-            )
-            surah_name = "Surah"
-            if surah_resp.status_code == 200:
-                surah_data = surah_resp.json()["chapter"]
-                surah_name = surah_data["translated_name"]["name"]
+            # 'data' will be a list containing the 3 editions requested
+            # Map them by their identifier
+            edition_map = {item["edition"]["identifier"]: item for item in data}
             
             return {
-                "id": f"{verse['chapter_id']}:{verse['verse_number']}",
-                "arabic": verse["text_uthmani"],
-                "translation": self._clean_html(translation),
-                "surah_english": surah_name
+                "id": f"{data[0]['surah']['number']}:{data[0]['numberInSurah']}",
+                "arabic": edition_map["quran-uthmani"]["text"],
+                "translation": edition_map["en.sahih"]["text"],
+                "transliteration": edition_map["en.transliteration"]["text"],
+                "surah_english": data[0]["surah"]["englishName"] # This comes in the same response!
             }
         except Exception as e:
-            logger.warning(f"Quran API error: {e}")
-            return self._get_fallback_content("ayah")
-    
+            logger.warning(f"Error: {e}")
+            return None
+
     def fetch_random_hadith(self) -> Optional[Dict]:
         """
         Fetch random hadith DIRECTLY from authenticated static CDN (no 404s).

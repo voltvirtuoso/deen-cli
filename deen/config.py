@@ -39,7 +39,7 @@ class DeenConfig:
                 "latitude_adjustment": "1"
             },
             "api": {
-                "quran_base_url": "https://api.quran.com/api/v4",
+                "quran_base_url": "http://api.alquran.cloud/v1",
                 "hadith_base_url": "https://hadithapi.pages.dev/api",
                 "aladhan_base_url": "https://api.aladhan.com/v1",
                 "nominatim_base_url": "https://nominatim.openstreetmap.org",

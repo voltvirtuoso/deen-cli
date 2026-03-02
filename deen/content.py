@@ -80,8 +80,8 @@ class ContentEngine:
             "arabic_text": self._create_rtl_text(dua["arabic"]),
             "translation": dua["translation"],
             "source": dua["source"],
-            "category": dua["category"],
-            "transliteration": self._simple_transliteration(dua["arabic"])
+            "category": dua["category"]
+            # "transliteration": self._simple_transliteration(dua["arabic"])
         }
     
     def display_content(self, content_type: str = "dua", category: Optional[str] = None, 
@@ -136,7 +136,7 @@ class ContentEngine:
             panel_content = Text()
             panel_content.append(content["arabic_text"])
             panel_content.append("\n\n")
-            panel_content.append(f"({content.get('transliteration', 'Transliteration')})\n\n", style="cyan")
+            # panel_content.append(f"({content.get('transliteration', 'Transliteration')})\n\n", style="cyan")
             panel_content.append(f"\"{content['translation']}\"\n", style="italic")
             panel_content.append(f"— {content['source']}", style="dim")
             

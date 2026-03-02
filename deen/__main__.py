@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""deen-cli: Git-style Islamic productivity companion - ZERO hardcoded religious content"""
+"""deen-cli: Git-style Islamic productivity companion"""
 import typer
 from datetime import datetime
 from .services.api import ApiService

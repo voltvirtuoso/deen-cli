@@ -1,4 +1,4 @@
-"""Unified API client with config-driven endpoints - NO 404 errors"""
+"""Unified API client with config-driven endpoints"""
 import httpx
 from typing import Dict, Optional
 import logging

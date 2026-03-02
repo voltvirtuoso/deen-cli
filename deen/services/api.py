@@ -90,10 +90,12 @@ class ApiService:
         try:
             collections = ["bukhari", "muslim", "tirmidhi", "nasai", "abudawud", "ibnmajah"]
             collection = random.choice(collections)
+
+            base_url = self.config.get("api.hadith_base_url")
             
             # ✅ FIXED: Remove extra space in URL
             resp = httpx.get(
-                f"https://cdn.jsdelivr.net/gh/fawazahmed0/hadith-api@1/editions/eng-{collection}.json",
+                f"{base_url}/eng-{collection}.json",
                 timeout=self.timeout,
                 headers={"User-Agent": "deen-cli/0.1"}
             )

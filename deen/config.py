@@ -40,7 +40,7 @@ class DeenConfig:
             },
             "api": {
                 "quran_base_url": "http://api.alquran.cloud/v1",
-                "hadith_base_url": "https://hadithapi.pages.dev/api",
+                "hadith_base_url": "https://cdn.jsdelivr.net/gh/fawazahmed0/hadith-api@1/editions",
                 "aladhan_base_url": "https://api.aladhan.com/v1",
                 "nominatim_base_url": "https://nominatim.openstreetmap.org",
                 "translation_id": 20,

@@ -110,7 +110,7 @@ class ContentEngine:
                 panel_content.append(content["arabic_text"])
                 panel_content.append("\n\n")
             
-            # ✅ FIXED: Use explicit style instead of markup strings
+            # Use explicit style instead of markup strings
             grade_lower = content['grade'].lower()
             if "sahih" in grade_lower:
                 grade_style = "bold green"

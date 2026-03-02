@@ -93,7 +93,6 @@ class ApiService:
 
             base_url = self.config.get("api.hadith_base_url")
             
-            # ✅ FIXED: Remove extra space in URL
             resp = httpx.get(
                 f"{base_url}/eng-{collection}.json",
                 timeout=self.timeout,
@@ -123,7 +122,6 @@ class ApiService:
             # Pick random hadith
             h = random.choice(hadiths)
             
-            # ✅ FIXED: Robust narrator extraction with multiple fallbacks
             narrator = (
                 h.get("narrator") or 
                 h.get("narratorEnglish") or 
@@ -156,7 +154,7 @@ class ApiService:
                 "id": hadith_number,
                 "collection": collection,
                 "text": text,
-                "narrator": narrator,  # ✅ FIXED: No more "Unknown narrator"
+                "narrator": narrator, 
                 "grade": grade,
                 "reference": reference
             }

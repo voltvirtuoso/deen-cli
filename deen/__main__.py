@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """deen-cli: Git-style Islamic productivity companion"""
+import logging
 import typer
 from datetime import datetime
 from .services.api import ApiService
@@ -19,10 +20,25 @@ from .content import ContentEngine
 
 app = typer.Typer(
     name="deen",
-    help="✨ Git-style Islamic productivity companion",
+    help=(
+        "[bold]deen-cli[/bold] \u2014 a git-style tracker for daily Islamic habits "
+        "(prayers, Qur'an, dhikr), plus a spiritual-content lookup (ayah / hadith / dua).\n\n"
+        "[dim]First run:[/dim] deen init\n"
+        "[dim]Then:[/dim] deen status  \u00b7  deen commit  \u00b7  deen inspire\n\n"
+        "[dim]Shell tab-completion (optional, not required to use deen-cli):[/dim]\n"
+        "[dim]  --install-completion installs it for your current shell (bash/zsh/fish/etc.)[/dim]\n"
+        "[dim]  --show-completion prints the completion script instead of installing it[/dim]"
+    ),
     add_completion=True,
-    rich_markup_mode="rich"
+    rich_markup_mode="rich",
+    no_args_is_help=False,  # bare `deen` shows a friendly dashboard instead (see main() below)
 )
+config_app = typer.Typer(
+    name="config",
+    help="View or change deen-cli settings (logging, caching, API endpoints).",
+    rich_markup_mode="rich",
+)
+app.add_typer(config_app, name="config")
 console = Console()
 
 @app.command()
@@ -67,21 +83,13 @@ def init():
     # Fetch calculation methods with location hint
     console.print("\n[dim]🕌 Fetching prayer calculation methods...[/dim]")
     metadata = MetadataService(config)
-    methods = metadata.get_calculation_methods(location)
-    
+    methods, used_offline_fallback = metadata.get_calculation_methods(location)
+
     if not methods:
-        console.print("[yellow]⚠️  Could not fetch methods. Using regional defaults.[/yellow]")
-        # Create minimal defaults based on location
-        default_method_id = metadata.get_smart_default_method(location)
-        methods = [
-            {"id": "1", "name": "University of Islamic Sciences, Karachi", "region": "🇵🇰 Pakistan", "is_default_for": ["pakistan"]},
-            {"id": "2", "name": "Islamic Society of North America (ISNA)", "region": "🇺🇸 North America", "is_default_for": ["usa", "canada"]},
-            {"id": "3", "name": "Muslim World League", "region": "🌍 Global", "is_default_for": ["global"]},
-            {"id": "4", "name": "Umm Al-Qura University, Makkah", "region": "🇸🇦 Saudi Arabia", "is_default_for": ["saudi arabia"]},
-            {"id": "5", "name": "Egyptian General Authority", "region": "🇪🇬 Egypt", "is_default_for": ["egypt"]}
-        ]
-        # Sort with location-relevant method first
-        methods.sort(key=lambda x: 0 if any(r in location.lower() for r in x["is_default_for"]) else 1)
+        console.print("[red]✗ Could not load calculation methods (API unreachable and no offline data). Try again with a network connection.[/red]")
+        raise typer.Exit(1)
+    if used_offline_fallback:
+        console.print("[yellow]⚠️  Aladhan API unreachable; using the bundled offline method list.[/yellow]")
     
     # Display methods table
     table = Table(title="Prayer Calculation Methods", show_header=True, header_style="bold")
@@ -183,15 +191,55 @@ def init():
 def inspire(
     content_type: str = typer.Option("hadith", "--type", "-t", help="Content type: ayah, hadith, dua"),
     mood: str = typer.Option(None, "--mood", "-m", help="Emotional state: stressed, anxious, grateful, sad, angry, lonely, tired, doubtful"),
-    category: str = typer.Option(None, "--category", "-c", help="Dua category: morning, evening, dhikr, protection, sleep"),
-    fresh: bool = typer.Option(False, "--fresh", "-f", help="Get fresh content")
+    category: str = typer.Option(
+        None, "--category", "-c",
+        help=(
+            "Scopes --list (and, for dua, also scopes the random pick): "
+            "for --type dua, a category number/shortcut (run 'deen categories'); "
+            "for --type hadith, a collection name (bukhari, muslim, tirmidhi, nasai, abudawud, ibnmajah); "
+            "for --type ayah, a surah number 1-114 (run 'deen surahs')."
+        ),
+    ),
+    fresh: bool = typer.Option(False, "--fresh", "-f", help="Get fresh content"),
+    list_all: bool = typer.Option(
+        False, "--list", "-l",
+        help="Show ALL items for --category in a scrollable pager (arrow keys/space to scroll, '/' to search, 'q' to quit) instead of one random pick. Requires --category.",
+    ),
 ):
     """Get spiritual inspiration (API-driven with authenticated fallbacks)"""
     config = DeenConfig()
     if not config.is_initialized:
         console.print("[red]✗ Run 'deen init' first[/red]")
         raise typer.Exit(1)
-    
+
+    if list_all:
+        if not category:
+            hint = {
+                "dua": "a category, e.g. -c morning (see 'deen categories')",
+                "hadith": "a collection, e.g. -c bukhari (bukhari, muslim, tirmidhi, nasai, abudawud, ibnmajah)",
+                "ayah": "a surah number, e.g. -c 36 (see 'deen surahs')",
+            }.get(content_type, "a --category")
+            console.print(f"[red]✗ --list requires --category: {hint}[/red]")
+            raise typer.Exit(1)
+
+        try:
+            engine = ContentEngine()
+            if content_type == "dua":
+                engine.display_dua_list(category)
+            elif content_type == "hadith":
+                engine.display_hadith_list(category.strip().lower())
+            elif content_type == "ayah":
+                engine.display_ayah_list(category)
+            else:
+                console.print(f"[red]✗ Unknown --type '{content_type}'. Use ayah, hadith, or dua.[/red]")
+                raise typer.Exit(1)
+        except typer.Exit:
+            raise
+        except Exception as e:
+            console.print(f"[red]✗ Error: {e}[/red]")
+            raise typer.Exit(1)
+        return
+
     try:
         engine = ContentEngine()
         engine.display_content(
@@ -200,10 +248,92 @@ def inspire(
             force_fresh=fresh,
             mood=mood
         )
+    except typer.Exit:
+        raise
     except Exception as e:
-        console.print(f"[red]✗ Error: {e}[/red]", err=True)
+        console.print(f"[red]✗ Error: {e}[/red]")
         raise typer.Exit(1)
-    
+
+
+@app.command()
+def categories():
+    """List dua categories for `deen inspire --type dua --category ...`.
+
+    Fetched live from the Hisn al-Muslim collection (132 categories) so
+    this always reflects what's actually available, instead of a
+    hardcoded short list.
+    """
+    config = DeenConfig()
+    api = ApiService(config)
+
+    console.print("[dim]📚 Fetching dua categories...[/dim]")
+    data, is_offline_fallback = api.fetch_dua_categories()
+
+    if is_offline_fallback:
+        console.print("[yellow]⚠️  Dua API unreachable and nothing cached; showing a minimal offline shortcut list.[/yellow]\n")
+
+    shortcuts = data.get("shortcuts", [])
+    if shortcuts:
+        console.print("[bold]Named shortcuts[/bold] (use with --category):")
+        console.print("  " + ", ".join(shortcuts))
+        console.print()
+
+    categories_list = data.get("categories", [])
+    if categories_list:
+        table = Table(title=f"All {len(categories_list)} categories (or use a numeric --category)")
+        table.add_column("#", style="cyan", justify="right")
+        table.add_column("Category", style="white")
+        table.add_column("Duas", style="dim", justify="right")
+        for c in categories_list:
+            table.add_row(str(c.get("number", "?")), c.get("en", "Unknown"), str(c.get("count", "?")))
+        console.print(table)
+    elif not is_offline_fallback:
+        console.print("[dim]No category list returned by the API.[/dim]")
+
+    console.print("\n[dim]💡 Leave --category blank for a fully random dua from the whole collection.[/dim]")
+
+
+@app.command()
+def surahs():
+    """List all 114 surahs (chapters) for `deen inspire --type ayah --list --category <number>`.
+
+    Fetched live from the Quran API so names/ayah counts are always
+    accurate. If it's unreachable, surah *numbers* 1-114 still work with
+    --list -- you just won't see the names here without a connection.
+    """
+    config = DeenConfig()
+    api = ApiService(config)
+
+    console.print("[dim]📖 Fetching surah list...[/dim]")
+    surah_list, is_offline_fallback = api.fetch_surah_list()
+
+    if is_offline_fallback or not surah_list:
+        console.print(
+            "[yellow]⚠️  Quran API unreachable and nothing cached, so surah names aren't available "
+            "right now.[/yellow]\n"
+            "[dim]Surah numbers 1-114 still work directly, e.g.: "
+            "deen inspire --type ayah --list --category 36[/dim]"
+        )
+        raise typer.Exit(1)
+
+    table = Table(title=f"All {len(surah_list)} surahs")
+    table.add_column("#", style="cyan", justify="right")
+    table.add_column("Name", style="white")
+    table.add_column("English", style="white")
+    table.add_column("Meaning", style="dim")
+    table.add_column("Ayahs", style="dim", justify="right")
+    for s in surah_list:
+        table.add_row(
+            str(s.get("number", "?")),
+            s.get("name", ""),
+            s.get("englishName", "?"),
+            s.get("englishNameTranslation", ""),
+            str(s.get("numberOfAyahs", "?")),
+        )
+    console.print(table)
+    console.print("\n[dim]💡 deen inspire --type ayah --list --category <#> to page through a whole surah.[/dim]")
+
+
 @app.command()
 def status():
     """Show prayer times with completion markers and next prayer countdown"""
@@ -220,25 +350,20 @@ def status():
             console.print("[yellow]⚠️  Location not set. Run 'deen init' to configure.[/yellow]")
             raise typer.Exit(1)
         
-        # Fetch prayer times
+        # Fetch prayer times (cache -> live -> stale cache; never fabricated)
         api = ApiService(config)
         today = datetime.now().strftime("%Y-%m-%d")
-        prayers = api.fetch_prayer_times(float(lat), float(lon), today)
-        
-        # Location-aware defaults if API fails
+        prayers, is_stale = api.fetch_prayer_times(float(lat), float(lon), today)
+
         if not prayers:
-            location_lower = config.get("user.location", "").lower()
-            if any(x in location_lower for x in ["pakistan", "islamabad", "karachi", "lahore"]):
-                prayers = {
-                    "Fajr": "05:17", "Sunrise": "06:39", "Dhuhr": "12:21",
-                    "Asr": "15:33", "Maghrib": "18:02", "Isha": "19:25"
-                }
-            else:
-                prayers = {
-                    "Fajr": "05:30", "Sunrise": "06:45", "Dhuhr": "13:15",
-                    "Asr": "16:45", "Maghrib": "19:30", "Isha": "21:00"
-                }
-            console.print("[yellow]⚠️  Using fallback prayer times (API unavailable)[/yellow]")
+            console.print(
+                "[red]✗ Could not get prayer times: the Aladhan API is unreachable "
+                "and nothing is cached yet.[/red]\n"
+                "[dim]Connect to the internet and try again.[/dim]"
+            )
+            raise typer.Exit(1)
+        if is_stale:
+            console.print("[yellow]⚠️  API unreachable — showing the last cached prayer times (may be outdated).[/yellow]")
         
         # Get today's prayer completion status
         prayer_status = get_today_prayer_status()
@@ -298,6 +423,8 @@ def status():
         console.print("  • [cyan]deen commit -t salah -m 'Dhuhr'[/cyan] → Log specific prayer")
         console.print("  • [cyan]deen log[/cyan] → View recent activity")
         
+    except typer.Exit:
+        raise
     except Exception as e:
         console.print(f"[red]✗ Error: {e}[/red]")
         raise typer.Exit(1)
@@ -353,6 +480,8 @@ def commit(
         console.print(f"   [dim]Note:[/dim] {message}")
     except ValueError as ve:
         console.print(f"[yellow]⚠️  {ve}[/yellow]")
+    except typer.Exit:
+        raise
     except Exception as e:
         console.print(f"[red]✗ Commit failed: {e}[/red]")
         raise typer.Exit(1)
@@ -409,8 +538,10 @@ def log(
         
         console.print(table)
         
+    except typer.Exit:
+        raise
     except Exception as e:
-        console.print_exception()
+        logging.getLogger("deen.cli").exception("Error fetching log")
         console.print(f"[red]✗ Error fetching log: {e}[/red]")
         raise typer.Exit(1)
 
@@ -425,12 +556,102 @@ def main(ctx: typer.Context):
         
         console.print("[bold green]deen-cli[/bold green] — Version Control for Your Deeds")
         console.print("\n[bold]Commands:[/bold]")
-        console.print("  init     → Setup configuration")
-        console.print("  status   → Prayer times & habit summary")
-        console.print("  commit   → Log habit completion")
-        console.print("  log      → View habit history")
-        console.print("  inspire  → Get spiritual content")
+        console.print("  init        → Setup configuration")
+        console.print("  status      → Prayer times & habit summary")
+        console.print("  commit      → Log habit completion")
+        console.print("  log         → View habit history")
+        console.print("  inspire     → Get spiritual content (ayah / hadith / dua)")
+        console.print("  categories  → List available dua categories")
+        console.print("  surahs      → List all 114 surahs")
+        console.print("  config      → View/change settings (logging, cache, endpoints)")
         console.print("\n[dim]'deen COMMAND --help' for details[/dim]")
+
+
+# --------------------------------------------------------------------------
+# `deen config` — inspect/change settings without hand-editing config.toml.
+# --------------------------------------------------------------------------
+
+_KNOWN_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+
+
+def _parse_config_value(raw: str):
+    """Coerce a CLI string into bool/int/float where unambiguous, else leave as str."""
+    low = raw.strip().lower()
+    if low in ("true", "false"):
+        return low == "true"
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    return raw
+
+
+@config_app.command("show")
+def config_show():
+    """Show all current settings and where deen-cli stores its files."""
+    config = DeenConfig()
+    from .cache import get_cache_dir
+
+    table = Table(title="deen-cli configuration", show_lines=False)
+    table.add_column("Key", style="cyan")
+    table.add_column("Value", style="white")
+
+    def walk(prefix: str, d: dict):
+        for k, v in d.items():
+            path = f"{prefix}.{k}" if prefix else k
+            if isinstance(v, dict):
+                walk(path, v)
+            else:
+                table.add_row(path, str(v))
+
+    walk("", config._config)
+    console.print(table)
+
+    console.print("\n[bold]File locations[/bold]")
+    console.print(f"  Config:  {config.config_path}")
+    console.print(f"  Data DB: {config.config_dir / 'data.db'}")
+    console.print(f"  Cache:   {get_cache_dir()}")
+    console.print(f"  Logs:    {config.logs_dir / 'deen.log'}")
+    console.print(
+        f"\n[dim]💡 Change logging verbosity with: "
+        f"deen config set logging.level DEBUG[/dim]"
+    )
+
+
+@config_app.command("set")
+def config_set(
+    key: str = typer.Argument(..., help="Dot-notation config key, e.g. logging.level or cache.enable"),
+    value: str = typer.Argument(..., help="New value. true/false and numbers are auto-detected."),
+):
+    """Set a config value (e.g. logging level, cache on/off, API endpoints)."""
+    config = DeenConfig()
+
+    if key == "logging.level" and value.upper() not in _KNOWN_LOG_LEVELS:
+        console.print(f"[red]✗ logging.level must be one of: {', '.join(sorted(_KNOWN_LOG_LEVELS))}[/red]")
+        raise typer.Exit(1)
+
+    parsed = _parse_config_value(value) if key != "logging.level" else value.upper()
+    config.set(key, parsed)
+    console.print(f"[green]✓[/green] {key} = {parsed}")
+    if key.startswith("logging."):
+        console.print("[dim]Takes effect on the next deen command (logging is set up once per run).[/dim]")
+
+
+@config_app.command("path")
+def config_path():
+    """Print where deen-cli's config, database, cache, and logs live."""
+    config = DeenConfig()
+    from .cache import get_cache_dir
+
+    console.print(f"Config:  {config.config_path}")
+    console.print(f"Data DB: {config.config_dir / 'data.db'}")
+    console.print(f"Cache:   {get_cache_dir()}")
+    console.print(f"Logs:    {config.logs_dir / 'deen.log'}")
+
 
 if __name__ == "__main__":
     app()

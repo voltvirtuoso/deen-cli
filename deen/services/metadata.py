@@ -1,72 +1,119 @@
-"""Fetch prayer calculation metadata from Aladhan API with smart region detection"""
-import httpx
-from typing import List, Dict, Optional
+"""Fetch prayer calculation metadata from Aladhan API with smart region detection."""
 import logging
+from typing import Dict, List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+import httpx
+
+from ..cache import Cache, get_or_fetch
+
+logger = logging.getLogger("deen.metadata")
+
+# Real Aladhan calculation-method IDs/names (https://aladhan.com/prayer-times-api,
+# "method" parameter), bundled as an offline fallback for when the /methods
+# endpoint is unreachable and nothing is cached yet. These are static,
+# officially documented values -- not invented placeholders -- so unlike the
+# previous 5-method stand-in list, this fallback covers the same methods the
+# live API would normally return, with the same region metadata used by
+# `_detect_region` below.
+OFFLINE_METHODS: List[Dict] = [
+    {"id": "0", "name": "Shia Ithna-Ashari, Leva Institute, Qum", "region": "☪️ Shia"},
+    {"id": "1", "name": "University of Islamic Sciences, Karachi", "region": "🇵🇰 Pakistan"},
+    {"id": "2", "name": "Islamic Society of North America (ISNA)", "region": "🇺🇸 North America"},
+    {"id": "3", "name": "Muslim World League", "region": "🌍 Global"},
+    {"id": "4", "name": "Umm Al-Qura University, Makkah", "region": "🇸🇦 Saudi Arabia"},
+    {"id": "5", "name": "Egyptian General Authority of Survey", "region": "🇪🇬 Egypt"},
+    {"id": "7", "name": "Institute of Geophysics, University of Tehran", "region": "🇮🇷 Iran"},
+    {"id": "8", "name": "Gulf Region", "region": "🇦🇪 Gulf Region"},
+    {"id": "9", "name": "Kuwait", "region": "🇰🇼 Kuwait"},
+    {"id": "10", "name": "Qatar", "region": "🇶🇦 Qatar"},
+    {"id": "11", "name": "Majlis Ugama Islam Singapura, Singapore", "region": "🇸🇬 Singapore"},
+    {"id": "12", "name": "Union Organization islamic de France", "region": "🇫🇷 France"},
+    {"id": "13", "name": "Diyanet İşleri Başkanlığı, Turkey", "region": "🇹🇷 Turkey"},
+    {"id": "14", "name": "Spiritual Administration of Muslims of Russia", "region": "🇷🇺 Russia"},
+    {"id": "15", "name": "Moonsighting Committee Worldwide", "region": "🌙 Moonsighting-based"},
+    {"id": "17", "name": "Jabatan Kemajuan Islam Malaysia (JAKIM)", "region": "🇲🇾 Malaysia"},
+    {"id": "18", "name": "Tunisia", "region": "🇹🇳 Tunisia"},
+    {"id": "19", "name": "Algeria", "region": "🇩🇿 Algeria"},
+    {"id": "20", "name": "Kementerian Agama Republik Indonesia", "region": "🇮🇩 Indonesia"},
+    {"id": "21", "name": "Morocco", "region": "🇲🇦 Morocco"},
+    {"id": "23", "name": "Jordan", "region": "🇯🇴 Jordan"},
+]
+
 
 class MetadataService:
-    def __init__(self, config: 'DeenConfig'):
+    def __init__(self, config: "DeenConfig"):
         self.config = config
         self.base_url = config.get("api.aladhan_base_url", "https://api.aladhan.com/v1")
         self.timeout = config.get("api.timeout_seconds", 10)
-    
-    def get_calculation_methods(self, location_hint: str = "") -> Optional[List[Dict]]:
+        self.ttl_seconds = float(config.get("cache.metadata_ttl_hours", 168)) * 3600
+        self.cache = Cache("metadata", enabled=config.get("cache.enable", True))
+
+    def get_calculation_methods(self, location_hint: str = "") -> Tuple[Optional[List[Dict]], bool]:
+        """Fetch calculation methods, using the cache -> live -> stale-cache -> bundled-offline chain.
+
+        Returns (methods, is_offline_fallback). ``is_offline_fallback`` is
+        True when we had to fall back to the bundled static list rather than
+        anything actually fetched from the API (live or cached).
         """
-        Fetch calculation methods with smart region detection.
-        location_hint: City/country name to set smart defaults (e.g., "Islamabad", "Pakistan")
-        """
-        try:
-            resp = httpx.get(
-                f"{self.base_url}/methods",
-                headers={"User-Agent": "deen-cli/0.1"},
-                timeout=self.timeout
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            
-            methods = []
-            location_lower = location_hint.lower() if location_hint else ""
-            
-            for method_key, method_data in data.get("data", {}).items():
-                # ✅ FIXED: Properly access 'name' field with .get() fallback
-                method_id = str(method_data.get("id", method_key))
-                method_name = method_data.get("name", f"Method {method_id}")
-                
-                # Smart region detection
-                region = self._detect_region(method_name, method_id, location_lower)
-                
-                # Skip method 99 for regular users
-                if method_id == "99" and "custom" not in location_lower:
-                    continue
-                
-                methods.append({
-                    "id": method_id,
-                    "name": method_name,
-                    "region": region,
-                    "is_default_for": self._get_default_regions(method_id)
-                })
-            
-            if not methods:
-                logger.warning("No methods found in API response")
-                return None
-            
-            # Sort with location-relevant methods first
+        location_lower = location_hint.lower() if location_hint else ""
+
+        raw_methods, is_stale = get_or_fetch(
+            self.cache, "calculation_methods", self.ttl_seconds, self._fetch_methods_raw
+        )
+
+        if raw_methods is None:
+            logger.warning("No live or cached calculation methods; using bundled offline list")
+            methods = [dict(m, is_default_for=self._get_default_regions(m["id"])) for m in OFFLINE_METHODS]
+            methods = [m for m in methods if m["id"] != "99" or "custom" in location_lower]
             methods.sort(key=lambda x: (
                 0 if any(r in location_lower for r in x["is_default_for"]) else 1,
-                int(x["id"]) if x["id"].isdigit() else 999
+                int(x["id"]) if x["id"].isdigit() else 999,
             ))
-            
-            return methods
-            
-        except Exception as e:
-            logger.warning(f"Failed to fetch calculation methods: {e}")
-            return None
-    
+            return methods, True
+
+        if is_stale:
+            logger.info("Calculation methods served from stale cache")
+
+        methods = []
+        for method_key, method_data in raw_methods.items():
+            method_id = str(method_data.get("id", method_key))
+            method_name = method_data.get("name", f"Method {method_id}")
+            region = self._detect_region(method_name, method_id, location_lower)
+
+            if method_id == "99" and "custom" not in location_lower:
+                continue
+
+            methods.append({
+                "id": method_id,
+                "name": method_name,
+                "region": region,
+                "is_default_for": self._get_default_regions(method_id),
+            })
+
+        if not methods:
+            return None, False
+
+        methods.sort(key=lambda x: (
+            0 if any(r in location_lower for r in x["is_default_for"]) else 1,
+            int(x["id"]) if x["id"].isdigit() else 999,
+        ))
+
+        return methods, False
+
+    def _fetch_methods_raw(self) -> Optional[Dict]:
+        resp = httpx.get(
+            f"{self.base_url}/methods",
+            headers={"User-Agent": "deen-cli/0.1"},
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", {})
+        return data or None
+
     def _detect_region(self, method_name: str, method_id: str, location_hint: str) -> str:
-        """Detect region/country from method name"""
+        """Detect region/country from method name."""
         name_lower = method_name.lower()
-        
+
         if "karachi" in name_lower or "islamic sciences" in name_lower:
             return "🇵🇰 Pakistan"
         if "umm al-qura" in name_lower or "makkah" in name_lower or "mecca" in name_lower:
@@ -113,61 +160,54 @@ class MetadataService:
             return "☪️ Shia"
         if method_id == "99":
             return "⚙️ Custom Parameters"
-        
+
         return "🌍 Global"
-    
+
     def _get_default_regions(self, method_id: str) -> List[str]:
-        """Return regions where this method is standard"""
+        """Return location keywords for which this method is the regional standard."""
         defaults = {
             "1": ["pakistan", "karachi", "lahore", "islamabad", "rawalpindi", "faisalabad", "multan"],
             "2": ["usa", "canada", "america", "united states", "north america"],
             "3": ["europe", "uk", "britain", "germany", "france", "global"],
             "4": ["saudi arabia", "makkah", "mecca", "madinah", "riyadh", "jeddah"],
             "5": ["egypt", "cairo", "alexandria"],
-            "99": ["custom", "advanced"]
+            "99": ["custom", "advanced"],
         }
         return defaults.get(method_id, [])
-    
+
     def get_schools(self) -> List[Dict]:
-        """Fetch madhab/school options"""
+        """Madhab/school options (fixed set defined by the Aladhan API's `school` parameter)."""
         return [
             {"id": "0", "name": "Shafi'i, Maliki, Hanbali (Standard)"},
-            {"id": "1", "name": "Hanafi"}
+            {"id": "1", "name": "Hanafi"},
         ]
-    
+
     def get_smart_default_method(self, location: str) -> str:
-        """Get smart default method ID based on location"""
+        """Get smart default method ID based on location."""
         location_lower = location.lower()
-        
-        # Pakistan cities → Method 1 (Karachi)
+
         pak_cities = ["islamabad", "karachi", "lahore", "rawalpindi", "faisalabad", "multan", "peshawar", "quetta"]
         if any(city in location_lower for city in pak_cities) or "pakistan" in location_lower:
             return "1"
-        
-        # Saudi Arabia → Method 4 (Umm Al-Qura)
+
         sa_cities = ["riyadh", "jeddah", "makkah", "mecca", "madinah", "dammam"]
         if any(city in location_lower for city in sa_cities) or "saudi arabia" in location_lower:
             return "4"
-        
-        # Egypt → Method 5
+
         if "egypt" in location_lower or "cairo" in location_lower:
             return "5"
-        
-        # North America → Method 2 (ISNA)
+
         na_regions = ["usa", "united states", "canada", "america", "new york", "los angeles", "toronto"]
         if any(region in location_lower for region in na_regions):
             return "2"
-        
-        # Default: MWL (Method 3) for global users
-        return "3"
-    
+
+        return "3"  # Muslim World League: sane global default
+
     def get_smart_default_school(self, location: str) -> str:
-        """Get smart default madhab based on location"""
+        """Get smart default madhab based on location."""
         location_lower = location.lower()
-        
-        # Pakistan/India/Bangladesh → Hanafi (majority)
+
         if any(x in location_lower for x in ["pakistan", "india", "bangladesh", "karachi", "lahore", "delhi", "dhaka"]):
             return "1"  # Hanafi
-        
-        # Default: Shafi'i/Maliki/Hanbali (Method 0)
-        return "0"
+
+        return "0"  # Shafi'i/Maliki/Hanbali

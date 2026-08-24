@@ -15,7 +15,8 @@ dependencies = [
     "tomli>=2.0.0; python_version < '3.11'",
     "tomli-w>=1.0.0",
     "arabic-reshaper>=3.0.0",
-    "python-bidi>=0.4.2"
+    "python-bidi>=0.4.2",
+    "platformdirs>=4.0.0"
 ]
 
 [project.scripts]

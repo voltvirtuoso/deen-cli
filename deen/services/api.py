@@ -161,7 +161,7 @@ class ApiService:
         }
 
     def fetch_ayahs_by_surah(self, surah: str) -> Optional[list]:
-        """Return every ayah in a surah (for `deen inspire --type ayah --list`).
+        """Return every ayah in a surah (for `deen read-surah`).
 
         Accepts a surah number 1-114. Cached for a long TTL (surah_ttl) since
         Qur'an text never changes -- unlike fetch_random_ayah, there's no
@@ -218,7 +218,7 @@ class ApiService:
         transliteration/spelling error going unnoticed in something we
         never re-verify) -- if the API and cache are both unavailable, we
         say so plainly instead. Surah *numbers* 1-114 always work with
-        --list even without this endpoint.
+        ``read-surah`` even without this endpoint.
         """
         data, is_stale = get_or_fetch(
             self._misc_cache, "surah_list", self.surah_ttl, self._fetch_surah_list_live
@@ -248,7 +248,7 @@ class ApiService:
         occasionally fetch a new collection to keep variety.
 
         ``collection``, when given, restricts the pick to that single
-        collection (same collection names as `--list`: bukhari, muslim,
+        collection (same collection names as ``read-hadith``: bukhari, muslim,
         tirmidhi, nasai, abudawud, ibnmajah) -- mirroring how `--category`
         already scopes the random pick for dua. An unrecognized collection
         name is ignored (falls back to picking across all collections)
@@ -351,7 +351,7 @@ class ApiService:
         return None
 
     def fetch_hadiths_list(self, collection: str) -> Optional[list]:
-        """Return every hadith in a collection, formatted (for `deen inspire --list`).
+        """Return every hadith in a collection, formatted (for `deen read-hadith`).
 
         Large collections (Sahih al-Bukhari has ~7,000 hadiths) are still a
         single cached fetch + one Arabic lookup map built once, rather than
@@ -521,7 +521,7 @@ class ApiService:
         """Return every dua in a category (all ~25 for "morning", etc.), already formatted.
 
         Used both by `fetch_random_dua` (picks one locally) and by
-        `deen inspire --list` (pages through all of them) -- the category's
+        `deen read-dua` (pages through all of them) -- the category's
         dua list is static content, so it's cached like a hadith
         collection rather than re-fetched per call.
         """
@@ -603,7 +603,7 @@ class ApiService:
         return result
 
     def _get_offline_duas_list(self, category: str) -> Optional[list]:
-        """Last-resort dua *list* for --list, from the small local offline pool.
+        """Last-resort dua list for ``read-dua``, from the small local offline pool.
 
         The offline pool only has a handful of entries per category (unlike
         the live API's ~25), but showing what we do have beats a hard

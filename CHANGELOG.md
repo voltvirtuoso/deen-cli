@@ -7,6 +7,25 @@ and versioning follows [Semantic Versioning](https://semver.org/) —
 `MAJOR.MINOR.PATCH`, where MAJOR = breaking changes, MINOR = backward-compatible
 features/fixes, PATCH = backward-compatible bug fixes only.
 
+## [0.3.0] - 2026-08-26
+
+### Added
+- Dedicated full-content readers: `deen read-surah --surah <number>`,
+  `deen read-hadith --collection <name>`, and
+  `deen read-dua --category <category>`.
+- `deen inspire` is now explicitly random-only; complete reading is no longer
+  mixed into the inspiration command through a list flag.
+
+### Fixed
+- Surah listings now pass Arabic names through the same shared
+  `arabic-reshaper` + `python-bidi` parser used by content cards, so the Arabic
+  column renders with proper joined glyphs and right-to-left ordering.
+- All Arabic terminal rendering now uses one centralized helper instead of
+  separate call-site implementations.
+
+### Changed
+- Updated README command reference and examples for the dedicated readers.
+
 ## [0.2.0] - 2026-08-26
 
 ### Added

@@ -13,6 +13,7 @@ from rich.table import Table
 import sys
 
 from .config import DeenConfig
+from .arabic import prepare_arabic
 from .database import init_db, check_existing_data
 from .services.location import LocationService
 from .services.metadata import MetadataService
@@ -25,7 +26,8 @@ app = typer.Typer(
         "[bold]deen-cli[/bold] \u2014 a git-style tracker for daily Islamic habits "
         "(prayers, Qur'an, dhikr), plus a spiritual-content lookup (ayah / hadith / dua).\n\n"
         "[dim]First run:[/dim] deen init\n"
-        "[dim]Then:[/dim] deen status  \u00b7  deen commit  \u00b7  deen inspire\n\n"
+        "[dim]Then:[/dim] deen status  \u00b7  deen commit  \u00b7  deen inspire\n"
+        "[dim]Read:[/dim] deen read-surah --surah 1  \u00b7  deen read-hadith --collection bukhari  \u00b7  deen read-dua --category morning\n\n"
         "[dim]Shell tab-completion (optional, not required to use deen-cli):[/dim]\n"
         "[dim]  --install-completion installs it for your current shell (bash/zsh/fish/etc.)[/dim]\n"
         "[dim]  --show-completion prints the completion script instead of installing it[/dim]"
@@ -207,7 +209,7 @@ def inspire(
     category: str = typer.Option(
         None, "--category", "-c",
         help=(
-            "Scopes both the random pick and --list: "
+            "Scopes the random pick only: "
             "for --type dua, a category number/shortcut (run 'deen categories'); "
             "for --type hadith, a collection name (bukhari, muslim, tirmidhi, nasai, abudawud, ibnmajah); "
             "for --type ayah, a surah number 1-114 (run 'deen surahs') -- e.g. --category 36 picks a "
@@ -215,12 +217,13 @@ def inspire(
         ),
     ),
     fresh: bool = typer.Option(False, "--fresh", "-f", help="Get fresh content"),
-    list_all: bool = typer.Option(
-        False, "--list", "-l",
-        help="Show ALL items for --category in a scrollable pager (arrow keys/space to scroll, '/' to search, 'q' to quit) instead of one random pick. Requires --category.",
-    ),
 ):
-    """Get spiritual inspiration (API-driven with authenticated fallbacks)"""
+    """Get one random piece of spiritual content.
+
+    Use ``read-surah``, ``read-hadith``, or ``read-dua`` when you want to
+    read a complete surah, hadith collection, or dua category.
+    """
+    content_type = content_type.strip().lower()
     config = DeenConfig()
     if not config.is_initialized:
         console.print("[red]✗ Run 'deen init' first[/red]")
@@ -238,34 +241,6 @@ def inspire(
             )
             raise typer.Exit(1)
 
-    if list_all:
-        if not category:
-            hint = {
-                "dua": "a category, e.g. -c morning (see 'deen categories')",
-                "hadith": "a collection, e.g. -c bukhari (bukhari, muslim, tirmidhi, nasai, abudawud, ibnmajah)",
-                "ayah": "a surah number, e.g. -c 36 (see 'deen surahs')",
-            }.get(content_type, "a --category")
-            console.print(f"[red]✗ --list requires --category: {hint}[/red]")
-            raise typer.Exit(1)
-
-        try:
-            engine = ContentEngine()
-            if content_type == "dua":
-                engine.display_dua_list(category)
-            elif content_type == "hadith":
-                engine.display_hadith_list(category.strip().lower())
-            elif content_type == "ayah":
-                engine.display_ayah_list(category)
-            else:
-                console.print(f"[red]✗ Unknown --type '{content_type}'. Use ayah, hadith, or dua.[/red]")
-                raise typer.Exit(1)
-        except typer.Exit:
-            raise
-        except Exception as e:
-            console.print(f"[red]✗ Error: {e}[/red]")
-            raise typer.Exit(1)
-        return
-
     try:
         engine = ContentEngine()
         engine.display_content(
@@ -281,9 +256,57 @@ def inspire(
         raise typer.Exit(1)
 
 
+@app.command("read-surah")
+def read_surah(
+    surah: str = typer.Option(..., "--surah", "-s", help="Surah number from 1 to 114 (run 'deen surahs')."),
+):
+    """Read every ayah in one complete surah in a scrollable pager."""
+    config = DeenConfig()
+    if not config.is_initialized:
+        console.print("[red]✗ Run 'deen init' first[/red]")
+        raise typer.Exit(1)
+    try:
+        ContentEngine().display_ayah_list(surah)
+    except Exception as e:
+        console.print(f"[red]✗ Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("read-hadith")
+def read_hadith(
+    collection: str = typer.Option(..., "--collection", "-c", help="Collection: bukhari, muslim, tirmidhi, nasai, abudawud, or ibnmajah."),
+):
+    """Read every hadith in one collection in a scrollable pager."""
+    config = DeenConfig()
+    if not config.is_initialized:
+        console.print("[red]✗ Run 'deen init' first[/red]")
+        raise typer.Exit(1)
+    try:
+        ContentEngine().display_hadith_list(collection.strip().lower())
+    except Exception as e:
+        console.print(f"[red]✗ Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("read-dua")
+def read_dua(
+    category: str = typer.Option(..., "--category", "-c", help="Dua category number or shortcut (run 'deen categories')."),
+):
+    """Read every dua in one category in a scrollable pager."""
+    config = DeenConfig()
+    if not config.is_initialized:
+        console.print("[red]✗ Run 'deen init' first[/red]")
+        raise typer.Exit(1)
+    try:
+        ContentEngine().display_dua_list(category)
+    except Exception as e:
+        console.print(f"[red]✗ Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
 @app.command()
 def categories():
-    """List dua categories for `deen inspire --type dua --category ...`.
+    """List dua categories for `deen inspire --category ...` or `deen read-dua`.
 
     Fetched live from the Hisn al-Muslim collection (132 categories) so
     this always reflects what's actually available, instead of a
@@ -316,16 +339,16 @@ def categories():
     elif not is_offline_fallback:
         console.print("[dim]No category list returned by the API.[/dim]")
 
-    console.print("\n[dim]💡 Leave --category blank for a fully random dua from the whole collection.[/dim]")
+    console.print("\n[dim]💡 Leave --category blank with `deen inspire -t dua` for a fully random dua.[/dim]")
 
 
 @app.command()
 def surahs():
-    """List all 114 surahs (chapters) for `deen inspire --type ayah --list --category <number>`.
+    """List all 114 surahs (chapters) for use with `deen read-surah --surah <number>`.
 
     Fetched live from the Quran API so names/ayah counts are always
-    accurate. If it's unreachable, surah *numbers* 1-114 still work with
-    --list -- you just won't see the names here without a connection.
+    accurate. If it is unreachable, surah *numbers* 1-114 still work with
+    `deen read-surah --surah <number>`; names are unavailable until connected.
     """
     config = DeenConfig()
     api = ApiService(config)
@@ -338,7 +361,7 @@ def surahs():
             "[yellow]⚠️  Quran API unreachable and nothing cached, so surah names aren't available "
             "right now.[/yellow]\n"
             "[dim]Surah numbers 1-114 still work directly, e.g.: "
-            "deen inspire --type ayah --list --category 36[/dim]"
+            "deen read-surah --surah 36[/dim]"
         )
         raise typer.Exit(1)
 
@@ -351,13 +374,13 @@ def surahs():
     for s in surah_list:
         table.add_row(
             str(s.get("number", "?")),
-            s.get("name", ""),
+            prepare_arabic(s.get("name")),
             s.get("englishName", "?"),
             s.get("englishNameTranslation", ""),
             str(s.get("numberOfAyahs", "?")),
         )
     console.print(table)
-    console.print("\n[dim]💡 deen inspire --type ayah --list --category <#> to page through a whole surah.[/dim]")
+    console.print("\n[dim]💡 deen read-surah --surah <#> to page through a whole surah.[/dim]")
 
 
 @app.command()
@@ -603,7 +626,10 @@ def main(
         console.print("  status      → Prayer times & habit summary")
         console.print("  commit      → Log habit completion")
         console.print("  log         → View habit history")
-        console.print("  inspire     → Get spiritual content (ayah / hadith / dua)")
+        console.print("  inspire     → Get one random spiritual item (ayah / hadith / dua)")
+        console.print("  read-surah  → Read a complete Quran surah")
+        console.print("  read-hadith → Read a complete hadith collection")
+        console.print("  read-dua    → Read all duas in a category")
         console.print("  categories  → List available dua categories")
         console.print("  surahs      → List all 114 surahs")
         console.print("  config      → View/change settings (logging, cache, endpoints)")

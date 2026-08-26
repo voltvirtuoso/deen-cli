@@ -3,8 +3,7 @@ import logging
 import textwrap
 from typing import Dict, List, Optional
 
-import arabic_reshaper
-from bidi.algorithm import get_display
+from .arabic import prepare_arabic
 from rich import box
 from rich.cells import cell_len
 from rich.console import Console, Group
@@ -97,7 +96,7 @@ class ContentEngine:
                 output_lines.append(paragraph)
                 continue
             for line in self._wrap_by_cells(paragraph, wrap_width):
-                output_lines.append(get_display(arabic_reshaper.reshape(line)))
+                output_lines.append(prepare_arabic(line))
         return "\n".join(output_lines)
 
     def _create_rtl_text(self, text: str) -> Text:
@@ -181,10 +180,9 @@ class ContentEngine:
     def get_random_ayah(self, force_fresh: bool = False, category: Optional[str] = None) -> Dict:
         """Get a random ayah, optionally scoped to one surah via ``category``.
 
-        Mirrors how --category already scopes the random pick for dua (and,
-        as of this fix, hadith): a surah number picks randomly among that
-        surah's own ayahs (fetched via the same cached surah lookup --list
-        uses) instead of --category being silently ignored outside --list.
+        Mirrors how --category scopes random picks for dua and hadith: a
+        surah number picks randomly among that surah's own ayahs (fetched via
+        the same cached surah lookup used by ``read-surah``).
         An invalid/unrecognized surah number falls through to the ordinary
         whole-Quran random pick rather than erroring.
         """
@@ -224,8 +222,7 @@ class ContentEngine:
 
         ``category``, when set to a valid collection name (bukhari, muslim,
         tirmidhi, nasai, abudawud, ibnmajah), scopes the random pick to that
-        collection -- same as it already does for dua -- instead of being
-        silently ignored outside of `--list`.
+        collection -- the full collection is read with ``read-hadith``.
 
         ``mood`` is resolved by the API layer via a keyword search over
         real hadith text (see MOOD_KEYWORDS in services/api.py); it was
@@ -274,7 +271,7 @@ class ContentEngine:
         }
 
     def list_duas(self, category: str) -> list:
-        """Get every dua in a category (for `deen inspire --type dua --list`)."""
+        """Get every dua in a category (for `deen read-dua --category ...`)."""
         duas = self.api.fetch_duas_list(category)
         if not duas:
             raise RuntimeError(
@@ -284,7 +281,7 @@ class ContentEngine:
         return duas
 
     def list_hadiths(self, collection: str) -> list:
-        """Get every hadith in a collection (for `deen inspire --type hadith --list`)."""
+        """Get every hadith in a collection (for `deen read-hadith --collection ...`)."""
         hadiths = self.api.fetch_hadiths_list(collection)
         if not hadiths:
             raise RuntimeError(
@@ -294,7 +291,7 @@ class ContentEngine:
         return hadiths
 
     def list_ayahs(self, surah: str) -> list:
-        """Get every ayah in a surah (for `deen inspire --type ayah --list`)."""
+        """Get every ayah in a surah (for `deen read-surah --surah ...`)."""
         ayahs = self.api.fetch_ayahs_by_surah(surah)
         if not ayahs:
             raise RuntimeError(
@@ -408,7 +405,7 @@ class ContentEngine:
 
         Large collections (Bukhari has ~7,000 hadiths) can take a moment to
         build the first time (and to reshape Arabic for each one) -- it's
-        all cached afterwards, same as `deen inspire --type hadith`.
+        all cached afterwards, same as `deen read-hadith --collection ...`.
         """
         console.print(f"[dim]\U0001F4DC Fetching {collection}... this may take a moment the first time.[/dim]")
         hadiths = self.list_hadiths(collection)

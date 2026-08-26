@@ -26,7 +26,7 @@
 - **Hadith**: Curated from *Sahih al-Bukhari*, *Sahih Muslim*, and other authenticated collections (Arabic text included where the collection publishes an Arabic edition; no transliteration exists for hadith at the source, so none is shown — nothing is invented to fill that gap)
 - **Dua**: Verified supplications from *Hisn al-Muslim*, with Arabic, transliteration & translation (live API, offline fallback)
 - Mood-aware hadith: `deen inspire --type hadith --mood stressed` keyword-matches real, authenticated hadith text on themes tied to the mood (no hadith source tags narrations by mood, so this is an honest workaround, not an API feature — falls back to a clearly-labeled random pick if nothing matches)
-- Browse instead of random: `deen categories` (dua), `deen surahs` (Quran), and `deen inspire --list --category <x>` page through a *entire* collection instead of one random pick — use this when you want to read, not be surprised
+- Discover and read: `deen categories` lists dua categories, `deen surahs` lists Quran chapters, and dedicated `deen read-surah`, `deen read-hadith`, and `deen read-dua` commands page through complete content. `deen inspire` is intentionally random-only.
 
 ### 📊 Habit Tracking (Git-Style)
 ```bash
@@ -39,7 +39,7 @@ deen log --days 30                      # View 30-day history
 ### 🌍 Intelligent Setup
 - Auto-location detection via multiple IP geolocation providers
 - Interactive setup wizard with region-aware defaults
-- Proper RTL/Arabic text rendering using `arabic-reshaper` + `python-bidi`
+- Proper RTL/Arabic text rendering using one shared `arabic-reshaper` + `python-bidi` parser across cards and surah listings
 
 ### 🔒 Privacy-First Design
 - All data stored locally in SQLite (`~/.deen/data.db`)
@@ -51,7 +51,7 @@ deen log --days 30                      # View 30-day history
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.8+
+- Python 3.10+
 - pip (Python package installer)
 
 ### Installation
@@ -87,7 +87,10 @@ The interactive wizard will:
 | `status` | Show today's prayer times with completion status | `deen status` |
 | `commit` | Log a spiritual habit completion | `deen commit -t salah -m "on time"` |
 | `log` | View recent habit history | `deen log --days 14` |
-| `inspire` | Get random spiritual content (or page through a whole collection with `--list`) | `deen inspire -t hadith -m grateful` |
+| `inspire` | Get one random spiritual item | `deen inspire -t hadith -m grateful` |
+| `read-surah` | Read every ayah in a complete surah | `deen read-surah --surah 36` |
+| `read-hadith` | Read every hadith in a collection | `deen read-hadith --collection bukhari` |
+| `read-dua` | Read every dua in a category | `deen read-dua --category morning` |
 | `categories` | List all dua categories (fetched live) | `deen categories` |
 | `surahs` | List all 114 surahs (fetched live) | `deen surahs` |
 | `config` | View/change settings (logging, cache, endpoints) | `deen config show` |
@@ -105,14 +108,31 @@ The interactive wizard will:
 -m, --mood TEXT     Hadith-only. Emotional state: stressed, anxious, grateful, sad,
                     angry, lonely, tired, doubtful. Keyword-matches real hadith text;
                     falls back to a labeled random pick if nothing matches.
--c, --category TEXT For dua: a category number/shortcut (see `deen categories`), also
-                    scopes the random pick. For hadith: a collection name (bukhari,
-                    muslim, tirmidhi, nasai, abudawud, ibnmajah), also scopes the
-                    random pick. For ayah: a surah number 1-114 (see `deen surahs`),
-                    used with --list.
+-c, --category TEXT For dua: a category number/shortcut (see `deen categories`),
+                    for hadith: a collection name, or for ayah: a surah number 1-114.
+                    In every case it only scopes the random item.
 -f, --fresh         Force fresh content (bypass cache)
--l, --list          Page through EVERY item for --category instead of one random pick
-                    (requires --category)
+```
+
+`inspire` has no full-list mode. Use the dedicated readers when you want
+complete content:
+
+### `deen read-surah`
+```bash
+deen read-surah --surah 1       # Read Al-Fatihah
+deen read-surah -s 36            # Read Ya-Sin
+```
+
+### `deen read-hadith`
+```bash
+deen read-hadith --collection bukhari
+deen read-hadith -c muslim
+```
+
+### `deen read-dua`
+```bash
+deen read-dua --category morning
+deen read-dua -c 1
 ```
 
 ---
@@ -158,6 +178,7 @@ deen-cli/
 │   ├── __init__.py          # CLI entry point (Typer app)
 │   ├── config.py            # TOML config management
 │   ├── database.py          # SQLite schema & queries
+│   ├── arabic.py            # Shared Arabic shaping/bidi normalization
 │   ├── content.py           # Content rendering engine (RTL-safe)
 │   └── services/
 │       ├── api.py           # Unified API client (Quran, Hadith, Prayer)

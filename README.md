@@ -26,7 +26,8 @@
 - **Hadith**: Curated from *Sahih al-Bukhari*, *Sahih Muslim*, and other authenticated collections (Arabic text included where the collection publishes an Arabic edition; no transliteration exists for hadith at the source, so none is shown — nothing is invented to fill that gap)
 - **Dua**: Verified supplications from *Hisn al-Muslim*, with Arabic, transliteration & translation (live API, offline fallback)
 - Mood-aware hadith: `deen inspire --type hadith --mood stressed` keyword-matches real, authenticated hadith text on themes tied to the mood (no hadith source tags narrations by mood, so this is an honest workaround, not an API feature — falls back to a clearly-labeled random pick if nothing matches)
-- Discover and read: `deen categories` lists dua categories, `deen surahs` lists Quran chapters, and dedicated `deen read-surah`, `deen read-hadith`, and `deen read-dua` commands page through complete content. `deen inspire` is intentionally random-only.
+- Discover and read: `deen categories` lists dua categories, `deen surahs` lists Quran chapters, and dedicated `deen read-surah`, `deen read-hadith`, and `deen read-dua` commands show compact pages instead of flooding the terminal. `deen inspire` is intentionally random-only.
+- Hadith navigation: `deen hadith-categories --collection bukhari` shows the collection's own source sections; `read-hadith` can then filter by section, English text, narrator, or exact hadith number.
 
 ### 📊 Habit Tracking (Git-Style)
 ```bash
@@ -89,7 +90,8 @@ The interactive wizard will:
 | `log` | View recent habit history | `deen log --days 14` |
 | `inspire` | Get one random spiritual item | `deen inspire -t hadith -m grateful` |
 | `read-surah` | Read every ayah in a complete surah | `deen read-surah --surah 36` |
-| `read-hadith` | Read every hadith in a collection | `deen read-hadith --collection bukhari` |
+| `read-hadith` | Read a page of hadiths with optional filters | `deen read-hadith --collection bukhari --page 1` |
+| `hadith-categories` | List source sections for a collection | `deen hadith-categories --collection bukhari` |
 | `read-dua` | Read every dua in a category | `deen read-dua --category morning` |
 | `categories` | List all dua categories (fetched live) | `deen categories` |
 | `surahs` | List all 114 surahs (fetched live) | `deen surahs` |
@@ -119,20 +121,31 @@ complete content:
 
 ### `deen read-surah`
 ```bash
-deen read-surah --surah 1       # Read Al-Fatihah
-deen read-surah -s 36            # Read Ya-Sin
+deen read-surah --surah 1 --page 1       # Read Al-Fatihah, ten ayahs per page
+deen read-surah -s 36 --per-page 5         # Read five ayahs at a time
+deen read-surah -s 2 --page 3              # Jump to a later page
 ```
 
 ### `deen read-hadith`
 ```bash
-deen read-hadith --collection bukhari
-deen read-hadith -c muslim
+deen hadith-categories --collection bukhari       # Show Bukhari's source sections
+deen read-hadith --collection bukhari --category 2 # Read only section 2
+deen read-hadith -c muslim --search intentions    # Search the English text
+deen read-hadith -c bukhari --number 1             # Read one exact hadith
 ```
+
+`--search` performs a case-insensitive text search across the English hadith,
+narrator, and source section title. `--category` accepts a source section number
+or part of its title. `--number` is an exact collection hadith number. Results
+are shown ten at a time by default; use `--page` and `--per-page` to navigate.
+Each selected page opens in an interactive `less` pager when available, then
+`bat`, with a built-in scrolling fallback. Pager input uses a UTF-8 pipe so
+Arabic and other Unicode characters remain intact on Windows.
 
 ### `deen read-dua`
 ```bash
 deen read-dua --category morning
-deen read-dua -c 1
+deen read-dua -c 1 --page 1
 ```
 
 ---

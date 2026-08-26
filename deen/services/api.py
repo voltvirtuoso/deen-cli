@@ -350,6 +350,37 @@ class ApiService:
 
         return None
 
+    def fetch_hadith_categories(self, collection: str) -> Optional[list]:
+        """Return the source's own book/section index for a collection."""
+        collection = collection.strip().lower()
+        if collection not in HADITH_COLLECTIONS:
+            return None
+
+        english_data, is_stale = get_or_fetch(
+            self._hadith_cache,
+            f"collection_{collection}_eng",
+            self.hadith_ttl,
+            lambda: self._fetch_hadith_collection(collection, _HADITH_ENGLISH_EDITION),
+        )
+        if not english_data:
+            return None
+
+        metadata = english_data.get("metadata", {})
+        sections = metadata.get("sections", {})
+        details = metadata.get("section_details", {})
+        categories = []
+        for number, name in sections.items():
+            if not name:
+                continue
+            detail = details.get(str(number), {})
+            categories.append({
+                "number": str(number),
+                "name": name,
+                "first": detail.get("hadithnumber_first"),
+                "last": detail.get("hadithnumber_last"),
+            })
+        return categories or None
+
     def fetch_hadiths_list(self, collection: str) -> Optional[list]:
         """Return every hadith in a collection, formatted (for `deen read-hadith`).
 
@@ -379,7 +410,19 @@ class ApiService:
             return None
 
         arabic_map = self._get_arabic_map(collection)
-        return [self._build_hadith_result(h, collection, arabic_map) for h in hadiths]
+        metadata = english_data.get("metadata", {})
+        sections = metadata.get("sections", {})
+        results = []
+        for h in hadiths:
+            result = self._build_hadith_result(h, collection, arabic_map)
+            reference = h.get("reference") or {}
+            section_number = reference.get("book") if isinstance(reference, dict) else None
+            if section_number is not None:
+                section_number = str(section_number)
+            result["section_number"] = section_number
+            result["section_name"] = sections.get(section_number, "") if section_number else ""
+            results.append(result)
+        return results
 
     def _fetch_hadith_collection(self, collection: str, edition_template: str) -> Optional[Dict]:
         base_url = self.config.get("api.hadith_base_url")

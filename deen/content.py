@@ -1,9 +1,10 @@
 """Content engine with API-driven content and correct RTL rendering."""
 import logging
 import textwrap
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from .arabic import prepare_arabic
+from .pager import page_text
 from rich import box
 from rich.cells import cell_len
 from rich.console import Console, Group
@@ -173,6 +174,47 @@ class ContentEngine:
             padding=(1, 2),
             expand=False,
         )
+
+    def _render_compact_card(
+        self,
+        *,
+        title: str,
+        border_style: str,
+        translation: str,
+        arabic: Optional[str] = None,
+        transliteration: Optional[str] = None,
+        badge: Optional[str] = None,
+        badge_style: str = "bold cyan",
+        footer: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> Group:
+        """Render one reading item as a compact, continuous reading block.
+
+        Full collections are read ten items at a time. A plain text block
+        keeps the Arabic, translation, and source together without nested
+        boxes or repeated blank rows that made a short surah unnecessarily tall.
+        """
+        width = self._content_width()
+        blocks = [Text(title, style="bold")]
+        if arabic:
+            blocks.append(self._create_rtl_text(arabic))
+
+        body = Text()
+        if badge:
+            body.append(badge, style=badge_style)
+            body.append("\n")
+        if transliteration:
+            body.append(self._wrap_plain(f"({transliteration})", width), style="cyan")
+            body.append("\n")
+        body.append(self._wrap_plain(f"\u201c{translation}\u201d", width), style="italic")
+        if footer:
+            body.append("\n")
+            body.append(self._wrap_plain(footer, width), style="dim")
+        if source:
+            body.append("\n")
+            body.append(f"— {source}", style="dim")
+        blocks.append(body)
+        return Group(*blocks)
 
     # ------------------------------------------------------------------
     # Fetch + shape a single item
@@ -378,18 +420,16 @@ class ContentEngine:
     # ------------------------------------------------------------------
     # Paged list display
     # ------------------------------------------------------------------
-    def display_dua_list(self, category: str):
-        """Page through every dua in a category using the system pager.
+    def display_dua_list(self, category: str, page: int = 1, per_page: int = 10):
+        """Read one page of duas from a category.
 
-        Uses Rich's Console.pager(), which shells out to `less` (or
-        $PAGER if set) -- the same scrolling you get from `bat`/`git log`:
-        arrow keys / space / Page Up-Down to scroll, "/" to search,
-        "q" to quit. Nothing custom to learn.
+        Pages are printed directly so Windows terminals retain real Unicode
+        characters instead of passing them through a legacy system pager.
         """
         duas = self.list_duas(category)
 
         def render(i: int, dua: Dict) -> Panel:
-            return self._render_card(
+            return self._render_compact_card(
                 title=f"\U0001F932 Dua {i}/{len(duas)}",
                 border_style="green",
                 arabic=dua["arabic"],
@@ -398,40 +438,100 @@ class ContentEngine:
                 source=dua["source"],
             )
 
-        self._page_through(duas, f"dua(s) \u2014 category: {category}", render)
+        self._page_through(duas, f"dua(s) \u2014 category: {category}", render, page, per_page)
 
-    def display_hadith_list(self, collection: str):
-        """Page through every hadith in a collection using the system pager.
+    @staticmethod
+    def filter_hadiths(
+        hadiths: list,
+        search: Optional[str] = None,
+        category: Optional[str] = None,
+        number: Optional[str] = None,
+    ) -> list:
+        """Filter hadiths by source section, exact number, and text search."""
+        query = search.strip().casefold() if search else ""
+        category_query = category.strip().casefold() if category else ""
+        number_query = str(number).strip() if number else ""
+        filtered = []
+        for hadith in hadiths:
+            if number_query and str(hadith.get("id", "")) != number_query:
+                continue
+            if category_query:
+                section_number = str(hadith.get("section_number") or "").casefold()
+                section_name = str(hadith.get("section_name") or "").casefold()
+                if category_query != section_number and category_query not in section_name:
+                    continue
+            if query:
+                searchable = " ".join(
+                    str(hadith.get(field) or "")
+                    for field in ("text", "narrator", "reference", "section_name")
+                ).casefold()
+                if query not in searchable:
+                    continue
+            filtered.append(hadith)
+        return filtered
 
-        Large collections (Bukhari has ~7,000 hadiths) can take a moment to
-        build the first time (and to reshape Arabic for each one) -- it's
-        all cached afterwards, same as `deen read-hadith --collection ...`.
+    def display_hadith_list(
+        self,
+        collection: str,
+        page: int = 1,
+        per_page: int = 10,
+        search: Optional[str] = None,
+        category: Optional[str] = None,
+        number: Optional[str] = None,
+    ):
+        """Read one page of hadiths from a collection using optional filters.
+
+        Large collections are fetched once and then narrowed by number, search
+        text, or source section before the requested page is printed.
         """
         console.print(f"[dim]\U0001F4DC Fetching {collection}... this may take a moment the first time.[/dim]")
         hadiths = self.list_hadiths(collection)
+        hadiths = self.filter_hadiths(hadiths, search, category, number)
+        if not hadiths:
+            criteria = []
+            if number:
+                criteria.append(f"number {number}")
+            if search:
+                criteria.append(f"search '{search}'")
+            if category:
+                criteria.append(f"category '{category}'")
+            detail = ", ".join(criteria) or "the supplied filters"
+            raise RuntimeError(f"No hadiths found in {collection} for {detail}.")
+
+        filter_label = ""
+        if search:
+            filter_label += f" • search: {search}"
+        if category:
+            filter_label += f" • category: {category}"
+        if number:
+            filter_label += f" • number: {number}"
 
         def render(i: int, h: Dict) -> Panel:
-            return self._render_card(
+            section = h.get("section_name")
+            footer = f"Narrated by {h['narrator']}"
+            if section:
+                footer += f" • {section}"
+            return self._render_compact_card(
                 title=f"\U0001F4DC Hadith {i}/{len(hadiths)}",
                 border_style="yellow",
                 arabic=h.get("arabic"),
                 badge=h.get("grade", "Unclassified"),
                 badge_style=self._grade_style(h.get("grade")),
                 translation=h["text"],
-                footer=f"Narrated by {h['narrator']}",
+                footer=footer,
                 source=h["reference"],
             )
 
-        self._page_through(hadiths, f"hadith(s) \u2014 {collection}", render)
+        self._page_through(hadiths, f"hadith(s) \u2014 {collection}{filter_label}", render, page, per_page)
 
-    def display_ayah_list(self, surah: str):
-        """Page through every ayah in a surah using the system pager."""
+    def display_ayah_list(self, surah: str, page: int = 1, per_page: int = 10):
+        """Read one page of ayahs from a surah."""
         ayahs = self.list_ayahs(surah)
         surah_name = ayahs[0].get("surah_english") if ayahs else None
         label = f"ayah(s) \u2014 Surah {surah}" + (f" ({surah_name})" if surah_name else "")
 
         def render(i: int, a: Dict) -> Panel:
-            return self._render_card(
+            return self._render_compact_card(
                 title=f"\U0001F54B Ayah {i}/{len(ayahs)}",
                 border_style="blue",
                 arabic=a["arabic"],
@@ -440,18 +540,41 @@ class ContentEngine:
                 source=a["id"],
             )
 
-        self._page_through(ayahs, label, render)
+        self._page_through(ayahs, label, render, page, per_page)
 
-    def _page_through(self, items: list, label: str, render_fn):
-        """Shared pager loop: prints a header then one Rich card per item.
+    def _page_through(
+        self,
+        items: list,
+        label: str,
+        render_fn: Callable[[int, Dict], object],
+        page: int = 1,
+        per_page: int = 10,
+    ):
+        """Render one manageable page through a Unicode-safe pager.
 
-        Splitting this out keeps display_dua_list / display_hadith_list /
-        display_ayah_list identical in structure (header + pager + one
-        card per item) instead of three copy-pasted pager blocks.
+        The pager prefers installed ``less`` and then ``bat``. Text is sent
+        through a UTF-8 pipe, avoiding the Windows ``pydoc.pager`` conversion
+        that produced literal ``\\u...`` escape sequences. If no external
+        pager exists, the built-in Windows fallback supports basic scrolling.
         """
-        with console.pager(styles=True):
-            console.rule(f"[bold]{len(items)} {label}[/bold]")
+        if page < 1:
+            raise ValueError("--page must be 1 or greater")
+        if per_page < 1:
+            raise ValueError("--per-page must be 1 or greater")
+        total_pages = (len(items) + per_page - 1) // per_page
+        if page > total_pages:
+            raise ValueError(f"--page {page} is outside the available range 1-{total_pages}")
+
+        start = (page - 1) * per_page
+        selected = items[start:start + per_page]
+        end = start + len(selected)
+        with console.capture() as capture:
+            console.rule(
+                f"[bold]{label} • page {page}/{total_pages} • items {start + 1}-{end} of {len(items)}[/bold]"
+            )
+            console.print("[dim]Use --page N to jump pages, --per-page N to change page size.[/dim]")
             console.print()
-            for i, item in enumerate(items, 1):
-                console.print(render_fn(i, item))
+            for offset, item in enumerate(selected):
+                console.print(render_fn(start + offset + 1, item))
                 console.print()
+        page_text(capture.get())

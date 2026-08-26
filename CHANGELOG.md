@@ -7,6 +7,43 @@ and versioning follows [Semantic Versioning](https://semver.org/) —
 `MAJOR.MINOR.PATCH`, where MAJOR = breaking changes, MINOR = backward-compatible
 features/fixes, PATCH = backward-compatible bug fixes only.
 
+## [0.4.2] - 2026-08-26
+
+### Changed
+- Restored interactive less/bat-style paging for full readers using installed
+  `less` first, then `bat`, with a built-in scrolling fallback when neither is
+  available.
+- Pager input is sent through a UTF-8 subprocess pipe so Windows keeps Arabic
+  and other Unicode characters intact; redirected output remains pipe-friendly.
+
+## [0.4.1] - 2026-08-26
+
+### Fixed
+- Full-content reading no longer routes output through the Windows legacy
+  system pager, which was printing Unicode code points literally as strings
+  such as `\\u2014`, `\\u201c`, and `\\ufe94`.
+- Arabic rendering defensively decodes literal Unicode escape sequences that
+  may already exist in cached/API text before applying shaping and bidi order.
+
+## [0.4.0] - 2026-08-26
+
+### Added
+- Reader pagination with `--page` and `--per-page` for surahs, hadiths, and
+  duas, preventing complete collections from flooding the terminal.
+- Hadith source-section discovery through
+  `deen hadith-categories --collection <name>`.
+- Hadith filtering through `--search`, `--category`, and exact `--number`.
+  Search covers English text, narrator, and source section title.
+
+### Fixed
+- Full-content cards now use compact padding and display only the requested
+  page, making short surahs and long collections practical to read.
+
+### Changed
+- Hadith categories come from each collection's published metadata rather
+  than an invented topic taxonomy. Free-text search remains available for
+  themes that span more than one source section.
+
 ## [0.3.0] - 2026-08-26
 
 ### Added

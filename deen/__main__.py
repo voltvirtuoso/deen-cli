@@ -3,6 +3,7 @@
 import logging
 import typer
 from datetime import datetime
+from typing import Optional
 from .services.api import ApiService
 from .database import commit_habit, get_recent_commits, get_today_prayer_status, get_db
 
@@ -258,15 +259,22 @@ def inspire(
 
 @app.command("read-surah")
 def read_surah(
-    surah: str = typer.Option(..., "--surah", "-s", help="Surah number from 1 to 114 (run 'deen surahs')."),
+    surah_arg: Optional[str] = typer.Argument(None, metavar="SURAH", help="Surah number from 1 to 114."),
+    surah: Optional[str] = typer.Option(None, "--surah", "-s", help="Surah number from 1 to 114 (run 'deen surahs')."),
+    page: int = typer.Option(1, "--page", "-p", min=1, help="Page number to display."),
+    per_page: int = typer.Option(10, "--per-page", min=1, max=50, help="Ayahs per page (1-50)."),
 ):
-    """Read every ayah in one complete surah in a scrollable pager."""
+    """Read a surah ten ayahs at a time with --page and --per-page."""
+    surah_number = surah or surah_arg
+    if not surah_number:
+        console.print("[red]✗ Provide a surah number, e.g. 'deen read-surah 101' or '--surah 101'.[/red]")
+        raise typer.Exit(1)
     config = DeenConfig()
     if not config.is_initialized:
         console.print("[red]✗ Run 'deen init' first[/red]")
         raise typer.Exit(1)
     try:
-        ContentEngine().display_ayah_list(surah)
+        ContentEngine().display_ayah_list(surah_number, page=page, per_page=per_page)
     except Exception as e:
         console.print(f"[red]✗ Error: {e}[/red]")
         raise typer.Exit(1)
@@ -275,14 +283,63 @@ def read_surah(
 @app.command("read-hadith")
 def read_hadith(
     collection: str = typer.Option(..., "--collection", "-c", help="Collection: bukhari, muslim, tirmidhi, nasai, abudawud, or ibnmajah."),
+    search: str = typer.Option(None, "--search", help="Search English text, narrator, or section title."),
+    category: str = typer.Option(None, "--category", help="Source section number or part of its title; run 'deen hadith-categories'."),
+    number: str = typer.Option(None, "--number", "-n", help="Read one exact hadith number."),
+    page: int = typer.Option(1, "--page", "-p", min=1, help="Page number to display."),
+    per_page: int = typer.Option(10, "--per-page", min=1, max=50, help="Hadiths per page (1-50)."),
 ):
-    """Read every hadith in one collection in a scrollable pager."""
+    """Read hadiths ten at a time; filter by text, number, or source category."""
     config = DeenConfig()
     if not config.is_initialized:
         console.print("[red]✗ Run 'deen init' first[/red]")
         raise typer.Exit(1)
     try:
-        ContentEngine().display_hadith_list(collection.strip().lower())
+        ContentEngine().display_hadith_list(
+            collection.strip().lower(),
+            page=page,
+            per_page=per_page,
+            search=search,
+            category=category,
+            number=number,
+        )
+    except Exception as e:
+        console.print(f"[red]✗ Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("hadith-categories")
+def hadith_categories(
+    collection: str = typer.Option(..., "--collection", "-c", help="Collection: bukhari, muslim, tirmidhi, nasai, abudawud, or ibnmajah."),
+):
+    """List a collection's source sections for use with --category."""
+    config = DeenConfig()
+    if not config.is_initialized:
+        console.print("[red]✗ Run 'deen init' first[/red]")
+        raise typer.Exit(1)
+    try:
+        categories_list = ApiService(config).fetch_hadith_categories(collection)
+        if not categories_list:
+            raise RuntimeError(
+                f"No categories found for '{collection}'. Valid collections: "
+                "bukhari, muslim, tirmidhi, nasai, abudawud, ibnmajah."
+            )
+        table = Table(title=f"{collection.strip().title()} hadith categories")
+        table.add_column("#", style="cyan", justify="right")
+        table.add_column("Section", style="white")
+        table.add_column("Hadith range", style="dim")
+        for item in categories_list:
+            first = item.get("first")
+            last = item.get("last")
+            number_range = f"{first}–{last}" if first is not None and last is not None else "?"
+            table.add_row(item["number"], item["name"], number_range)
+        console.print(table)
+        console.print(
+            "\n[dim]Example: deen read-hadith -c "
+            f"{collection.strip().lower()} --category 1 --page 1[/dim]"
+        )
+    except typer.Exit:
+        raise
     except Exception as e:
         console.print(f"[red]✗ Error: {e}[/red]")
         raise typer.Exit(1)
@@ -291,14 +348,16 @@ def read_hadith(
 @app.command("read-dua")
 def read_dua(
     category: str = typer.Option(..., "--category", "-c", help="Dua category number or shortcut (run 'deen categories')."),
+    page: int = typer.Option(1, "--page", "-p", min=1, help="Page number to display."),
+    per_page: int = typer.Option(10, "--per-page", min=1, max=50, help="Duas per page (1-50)."),
 ):
-    """Read every dua in one category in a scrollable pager."""
+    """Read a dua category ten items at a time with --page and --per-page."""
     config = DeenConfig()
     if not config.is_initialized:
         console.print("[red]✗ Run 'deen init' first[/red]")
         raise typer.Exit(1)
     try:
-        ContentEngine().display_dua_list(category)
+        ContentEngine().display_dua_list(category, page=page, per_page=per_page)
     except Exception as e:
         console.print(f"[red]✗ Error: {e}[/red]")
         raise typer.Exit(1)
@@ -628,8 +687,9 @@ def main(
         console.print("  log         → View habit history")
         console.print("  inspire     → Get one random spiritual item (ayah / hadith / dua)")
         console.print("  read-surah  → Read a complete Quran surah")
-        console.print("  read-hadith → Read a complete hadith collection")
-        console.print("  read-dua    → Read all duas in a category")
+        console.print("  read-hadith → Read hadiths by page, search, number, or source category")
+        console.print("  hadith-categories → List a collection's source sections")
+        console.print("  read-dua    → Read duas by page")
         console.print("  categories  → List available dua categories")
         console.print("  surahs      → List all 114 surahs")
         console.print("  config      → View/change settings (logging, cache, endpoints)")

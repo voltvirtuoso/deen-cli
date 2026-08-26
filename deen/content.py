@@ -178,8 +178,27 @@ class ContentEngine:
     # ------------------------------------------------------------------
     # Fetch + shape a single item
     # ------------------------------------------------------------------
-    def get_random_ayah(self, force_fresh: bool = False) -> Dict:
-        ayah = self.api.fetch_random_ayah()
+    def get_random_ayah(self, force_fresh: bool = False, category: Optional[str] = None) -> Dict:
+        """Get a random ayah, optionally scoped to one surah via ``category``.
+
+        Mirrors how --category already scopes the random pick for dua (and,
+        as of this fix, hadith): a surah number picks randomly among that
+        surah's own ayahs (fetched via the same cached surah lookup --list
+        uses) instead of --category being silently ignored outside --list.
+        An invalid/unrecognized surah number falls through to the ordinary
+        whole-Quran random pick rather than erroring.
+        """
+        ayah = None
+        if category and category.strip().isdigit() and 1 <= int(category.strip()) <= 114:
+            surah_ayahs = self.api.fetch_ayahs_by_surah(category.strip())
+            if surah_ayahs:
+                import random as _random
+                ayah = _random.choice(surah_ayahs)
+            else:
+                logger.warning(f"Could not fetch Surah {category} for --category; falling back to a random ayah")
+
+        if ayah is None:
+            ayah = self.api.fetch_random_ayah()
         if not ayah:
             # Both the live API and every offline fallback failed (e.g. a
             # fresh install with no network and no seeded content, which
@@ -199,9 +218,21 @@ class ContentEngine:
             "transliteration": ayah.get("transliteration") or None,
         }
 
-    def get_random_hadith(self, force_fresh: bool = False, mood: Optional[str] = None) -> Dict:
-        """Get a hadith from the API with an authenticated offline fallback."""
-        hadith = self.api.fetch_random_hadith()
+    def get_random_hadith(self, force_fresh: bool = False, mood: Optional[str] = None,
+                           category: Optional[str] = None) -> Dict:
+        """Get a hadith from the API with an authenticated offline fallback.
+
+        ``category``, when set to a valid collection name (bukhari, muslim,
+        tirmidhi, nasai, abudawud, ibnmajah), scopes the random pick to that
+        collection -- same as it already does for dua -- instead of being
+        silently ignored outside of `--list`.
+
+        ``mood`` is resolved by the API layer via a keyword search over
+        real hadith text (see MOOD_KEYWORDS in services/api.py); it was
+        previously accepted here only to be printed as a label and had no
+        effect on which hadith was actually returned.
+        """
+        hadith = self.api.fetch_random_hadith(mood=mood, collection=category)
         if not hadith:
             raise RuntimeError(
                 "No hadith available: the hadith API is unreachable and no offline content is cached. "
@@ -219,6 +250,10 @@ class ContentEngine:
             "source": hadith["reference"],
             "grade": hadith["grade"],
             "narrator": hadith["narrator"],
+            # None = no mood was requested; True = keyword-matched; False =
+            # a mood was requested but nothing matched, so this is a plain
+            # random pick shown as a fallback (see display_content).
+            "mood_matched": hadith.get("mood_matched") if mood else None,
         }
 
     def get_random_dua(self, category: Optional[str] = None) -> Dict:
@@ -275,7 +310,7 @@ class ContentEngine:
                         force_fresh: bool = False, mood: Optional[str] = None):
         """Render one piece of content as a card."""
         if content_type == "ayah":
-            content = self.get_random_ayah(force_fresh)
+            content = self.get_random_ayah(force_fresh, category)
             surah_suffix = f" \u2022 {content['surah_english']}" if content.get("surah_english") else ""
             title = f"\U0001F54B Quran {content['id']}{surah_suffix}{' [FRESH]' if force_fresh else ''}"
 
@@ -290,8 +325,13 @@ class ContentEngine:
             console.print(card)
 
         elif content_type == "hadith":
-            content = self.get_random_hadith(force_fresh, mood)
-            mood_tag = f" \u2022 Mood: {mood}" if mood else ""
+            content = self.get_random_hadith(force_fresh, mood, category)
+            if mood and content.get("mood_matched"):
+                mood_tag = f" \u2022 Mood: {mood} (matched)"
+            elif mood:
+                mood_tag = f" \u2022 Mood: {mood} (no match \u2014 random pick shown)"
+            else:
+                mood_tag = ""
             title = f"\U0001F4DC Hadith{' [FRESH]' if force_fresh else ''}{mood_tag}"
 
             card = self._render_card(

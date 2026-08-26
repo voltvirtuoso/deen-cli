@@ -22,10 +22,11 @@
 - Support for makeup prayers (`--makeup` flag)
 
 ### 📖 Authenticated Spiritual Content
-- **Quran**: Random ayah with Arabic, transliteration & translation (Quran.com API)
-- **Hadith**: Curated from *Sahih al-Bukhari*, *Sahih Muslim*, and other authenticated collections
-- **Dua**: Verified supplications from *Hisn al-Muslim* (offline fallback)
-- Mood-aware content: `deen inspire --mood stressed --type hadith`
+- **Quran**: Random ayah with Arabic, transliteration & translation ([alquran.cloud API](https://alquran.cloud/api))
+- **Hadith**: Curated from *Sahih al-Bukhari*, *Sahih Muslim*, and other authenticated collections (Arabic text included where the collection publishes an Arabic edition; no transliteration exists for hadith at the source, so none is shown — nothing is invented to fill that gap)
+- **Dua**: Verified supplications from *Hisn al-Muslim*, with Arabic, transliteration & translation (live API, offline fallback)
+- Mood-aware hadith: `deen inspire --type hadith --mood stressed` keyword-matches real, authenticated hadith text on themes tied to the mood (no hadith source tags narrations by mood, so this is an honest workaround, not an API feature — falls back to a clearly-labeled random pick if nothing matches)
+- Browse instead of random: `deen categories` (dua), `deen surahs` (Quran), and `deen inspire --list --category <x>` page through a *entire* collection instead of one random pick — use this when you want to read, not be surprised
 
 ### 📊 Habit Tracking (Git-Style)
 ```bash
@@ -86,7 +87,10 @@ The interactive wizard will:
 | `status` | Show today's prayer times with completion status | `deen status` |
 | `commit` | Log a spiritual habit completion | `deen commit -t salah -m "on time"` |
 | `log` | View recent habit history | `deen log --days 14` |
-| `inspire` | Get random spiritual content | `deen inspire -t hadith -m grateful` |
+| `inspire` | Get random spiritual content (or page through a whole collection with `--list`) | `deen inspire -t hadith -m grateful` |
+| `categories` | List all dua categories (fetched live) | `deen categories` |
+| `surahs` | List all 114 surahs (fetched live) | `deen surahs` |
+| `config` | View/change settings (logging, cache, endpoints) | `deen config show` |
 
 ### `deen commit` Options
 ```bash
@@ -98,9 +102,17 @@ The interactive wizard will:
 ### `deen inspire` Options
 ```bash
 -t, --type TEXT     Content type: ayah, hadith, dua [default: hadith]
--m, --mood TEXT     Emotional state: stressed, anxious, grateful, sad, angry, lonely, tired, doubtful
--c, --category TEXT Dua category: morning, evening, dhikr, protection, sleep
+-m, --mood TEXT     Hadith-only. Emotional state: stressed, anxious, grateful, sad,
+                    angry, lonely, tired, doubtful. Keyword-matches real hadith text;
+                    falls back to a labeled random pick if nothing matches.
+-c, --category TEXT For dua: a category number/shortcut (see `deen categories`), also
+                    scopes the random pick. For hadith: a collection name (bukhari,
+                    muslim, tirmidhi, nasai, abudawud, ibnmajah), also scopes the
+                    random pick. For ayah: a surah number 1-114 (see `deen surahs`),
+                    used with --list.
 -f, --fresh         Force fresh content (bypass cache)
+-l, --list          Page through EVERY item for --category instead of one random pick
+                    (requires --category)
 ```
 
 ---
@@ -228,10 +240,12 @@ Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for more informa
 
 ## 🙏 Acknowledgements
 
-- [Aladhan API](https://aladhan.com/) — Prayer times & Islamic date
-- [Quran.com API](https://quran.api-docs.io/) — Verified Quran text & translations
-- [Fawazahmed0/hadith-api](https://github.com/fawazahmed0/hadith-api) — Sahih hadith collections
+- [Aladhan API](https://aladhan.com/) — Prayer times, calculation methods & Islamic date
+- [Al Quran Cloud API](https://alquran.cloud/api) — Verified Quran text, translation & transliteration editions
+- [Fawazahmed0/hadith-api](https://github.com/fawazahmed0/hadith-api) — Authenticated hadith collections (English + Arabic editions where published; no transliteration edition exists for hadith)
+- [api.islamic.app](https://api.islamic.app/) — Hisn al-Muslim dua collection, categories & transliteration
 - [OpenStreetMap Nominatim](https://nominatim.org/) — Location search
+- [ipinfo.io / ipgeolocation.io / ipapi.co](https://ipinfo.io/) — IP-based location auto-detection (tried in order)
 - [python-bidi](https://pypi.org/project/python-bidi/) & [arabic-reshaper](https://pypi.org/project/arabic-reshaper/) — RTL text rendering
 
 ---

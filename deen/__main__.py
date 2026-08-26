@@ -17,6 +17,7 @@ from .database import init_db, check_existing_data
 from .services.location import LocationService
 from .services.metadata import MetadataService
 from .content import ContentEngine
+from . import __version__
 
 app = typer.Typer(
     name="deen",
@@ -187,17 +188,30 @@ def init():
     
     console.print("\n[bold]Next:[/bold] [cyan]deen inspire --type hadith --mood stressed[/cyan]")
 
+_VALID_MOODS = ["stressed", "anxious", "grateful", "sad", "angry", "lonely", "tired", "doubtful"]
+
+
 @app.command()
 def inspire(
     content_type: str = typer.Option("hadith", "--type", "-t", help="Content type: ayah, hadith, dua"),
-    mood: str = typer.Option(None, "--mood", "-m", help="Emotional state: stressed, anxious, grateful, sad, angry, lonely, tired, doubtful"),
+    mood: str = typer.Option(
+        None, "--mood", "-m",
+        help=(
+            "Hadith-only. Emotional state: " + ", ".join(_VALID_MOODS) + ". "
+            "No hadith source tags narrations by mood, so this keyword-matches real, "
+            "authenticated hadith text on themes tied to the mood (see 'deen inspire "
+            "--type hadith --mood ... '); if nothing matches, a plain random hadith is "
+            "shown and clearly labeled as such rather than a false match."
+        ),
+    ),
     category: str = typer.Option(
         None, "--category", "-c",
         help=(
-            "Scopes --list (and, for dua, also scopes the random pick): "
+            "Scopes both the random pick and --list: "
             "for --type dua, a category number/shortcut (run 'deen categories'); "
             "for --type hadith, a collection name (bukhari, muslim, tirmidhi, nasai, abudawud, ibnmajah); "
-            "for --type ayah, a surah number 1-114 (run 'deen surahs')."
+            "for --type ayah, a surah number 1-114 (run 'deen surahs') -- e.g. --category 36 picks a "
+            "random ayah from Surah Ya-Sin instead of anywhere in the Quran."
         ),
     ),
     fresh: bool = typer.Option(False, "--fresh", "-f", help="Get fresh content"),
@@ -211,6 +225,18 @@ def inspire(
     if not config.is_initialized:
         console.print("[red]✗ Run 'deen init' first[/red]")
         raise typer.Exit(1)
+
+    if mood:
+        if content_type != "hadith":
+            console.print(
+                f"[yellow]⚠️  --mood only applies to --type hadith; ignoring it for --type {content_type}.[/yellow]"
+            )
+            mood = None
+        elif mood.strip().lower() not in _VALID_MOODS:
+            console.print(
+                f"[red]✗ Unknown --mood '{mood}'. Valid moods: {', '.join(_VALID_MOODS)}[/red]"
+            )
+            raise typer.Exit(1)
 
     if list_all:
         if not category:
@@ -545,8 +571,25 @@ def log(
         console.print(f"[red]✗ Error fetching log: {e}[/red]")
         raise typer.Exit(1)
 
+def _version_callback(value: bool):
+    # Eager + no_args_is_help-independent: `deen --version` must print and
+    # exit before Typer tries to resolve a subcommand, same as any other
+    # well-behaved CLI (git, pip, etc.) -- hence is_eager=True below.
+    if value:
+        console.print(f"deen-cli {__version__}")
+        raise typer.Exit()
+
+
 @app.callback(invoke_without_command=True)
-def main(ctx: typer.Context):
+def main(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        False, "--version", "-V",
+        help="Show the deen-cli version and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+):
     """deen-cli: Git-style Islamic productivity companion"""
     if ctx.invoked_subcommand is None:
         config = DeenConfig()

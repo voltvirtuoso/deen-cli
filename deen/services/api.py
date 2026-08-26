@@ -14,6 +14,28 @@ logger = logging.getLogger("deen.api")
 
 HADITH_COLLECTIONS = ["bukhari", "muslim", "tirmidhi", "nasai", "abudawud", "ibnmajah"]
 
+# There is no hadith API that tags narrations by emotional "mood" -- that
+# classification doesn't exist as authenticated metadata anywhere, so it
+# can't be fetched. The accurate workaround (rather than either faking a
+# mood tag or silently ignoring --mood, which is what happened before) is
+# a keyword search over the REAL, authenticated hadith text returned by the
+# API: we look for hadith whose actual (unmodified) English text touches on
+# themes associated with each mood, and pick randomly among the matches.
+# This never invents or alters hadith text -- it only narrows which
+# already-authenticated hadith gets shown. If nothing matches, we say so
+# and fall back to an ordinary random authenticated hadith instead of
+# fabricating a "match".
+MOOD_KEYWORDS: Dict[str, list] = {
+    "stressed": ["hardship", "ease", "distress", "relief", "trial", "burden"],
+    "anxious": ["fear", "anxiety", "worry", "trust in allah", "peace of mind", "reassur"],
+    "grateful": ["gratitude", "thankful", "thanks", "grateful", "blessing", "praise"],
+    "sad": ["grief", "sorrow", "sadness", "mourn", "comfort", "patience"],
+    "angry": ["anger", "temper", "rage", "furious", "forgive", "calm"],
+    "lonely": ["companion", "brotherhood", "brethren", "loneliness", "alone", "ummah"],
+    "tired": ["rest", "ease", "burden", "strength", "patience", "weary"],
+    "doubtful": ["faith", "certainty", "doubt", "conviction", "belief", "sincerity"],
+}
+
 # Not every fawazahmed0 collection has a published Arabic edition under this
 # exact naming scheme; we try opportunistically and just omit Arabic text if
 # it's missing rather than fabricating/mislabeling anything as Arabic.
@@ -215,7 +237,7 @@ class ApiService:
     # ------------------------------------------------------------------
     # Hadith
     # ------------------------------------------------------------------
-    def fetch_random_hadith(self) -> Optional[Dict]:
+    def fetch_random_hadith(self, mood: Optional[str] = None, collection: Optional[str] = None) -> Optional[Dict]:
         """Fetch a random authenticated hadith, with matching Arabic text where available.
 
         Preferentially reuses collections we've already cached instead of
@@ -224,40 +246,109 @@ class ApiService:
         meant most calls missed the cache and hit the network anyway. Once
         a few collections are warm, we mostly serve from cache and only
         occasionally fetch a new collection to keep variety.
-        """
-        cached_collections = [
-            c for c in HADITH_COLLECTIONS
-            if self._hadith_cache.get(f"collection_{c}_eng", self.hadith_ttl) is not None
-        ]
 
-        if cached_collections and (
-            len(cached_collections) >= len(HADITH_COLLECTIONS) or random.random() < 0.85
-        ):
-            collection = random.choice(cached_collections)
+        ``collection``, when given, restricts the pick to that single
+        collection (same collection names as `--list`: bukhari, muslim,
+        tirmidhi, nasai, abudawud, ibnmajah) -- mirroring how `--category`
+        already scopes the random pick for dua. An unrecognized collection
+        name is ignored (falls back to picking across all collections)
+        rather than silently erroring.
+
+        ``mood``, when given, is resolved via `_fetch_mood_hadith` -- a
+        keyword match over real, already-authenticated hadith text (see
+        MOOD_KEYWORDS). It is never used to fabricate or alter content.
+        """
+        normalized_collection = None
+        if collection:
+            c = collection.strip().lower()
+            if c in HADITH_COLLECTIONS:
+                normalized_collection = c
+            else:
+                logger.info(f"Unrecognized hadith collection '{collection}' for --category; ignoring")
+
+        if mood:
+            matched = self._fetch_mood_hadith(mood, normalized_collection)
+            if matched is not None:
+                return matched
+            logger.info(
+                f"No hadith text matched mood '{mood}' in the searched collection(s); "
+                "falling back to a random authenticated hadith"
+            )
+
+        if normalized_collection:
+            collection_choice = normalized_collection
         else:
-            collection = random.choice(HADITH_COLLECTIONS)
+            cached_collections = [
+                c for c in HADITH_COLLECTIONS
+                if self._hadith_cache.get(f"collection_{c}_eng", self.hadith_ttl) is not None
+            ]
+            if cached_collections and (
+                len(cached_collections) >= len(HADITH_COLLECTIONS) or random.random() < 0.85
+            ):
+                collection_choice = random.choice(cached_collections)
+            else:
+                collection_choice = random.choice(HADITH_COLLECTIONS)
 
         english_data, is_stale = get_or_fetch(
             self._hadith_cache,
-            f"collection_{collection}_eng",
+            f"collection_{collection_choice}_eng",
             self.hadith_ttl,
-            lambda: self._fetch_hadith_collection(collection, _HADITH_ENGLISH_EDITION),
+            lambda: self._fetch_hadith_collection(collection_choice, _HADITH_ENGLISH_EDITION),
         )
 
         if english_data is None:
-            logger.warning(f"No live or cached hadith data for '{collection}'; using offline fallback")
+            logger.warning(f"No live or cached hadith data for '{collection_choice}'; using offline fallback")
             return self._get_fallback_content("hadith")
 
         if is_stale:
-            logger.info(f"Serving '{collection}' hadiths from stale cache")
+            logger.info(f"Serving '{collection_choice}' hadiths from stale cache")
 
         hadiths = self._flatten_hadiths(english_data)
         if not hadiths:
             return self._get_fallback_content("hadith")
 
         h = random.choice(hadiths)
-        arabic_map = self._get_arabic_map(collection)
-        return self._build_hadith_result(h, collection, arabic_map)
+        arabic_map = self._get_arabic_map(collection_choice)
+        result = self._build_hadith_result(h, collection_choice, arabic_map)
+        if mood:
+            result["mood_matched"] = False
+        return result
+
+    def _fetch_mood_hadith(self, mood: str, collection: Optional[str]) -> Optional[Dict]:
+        """Keyword-search real (already fetched/cached) hadith text for a mood match.
+
+        Searches whichever collections are already warm in the cache first
+        (no extra network cost); if nothing is cached yet, searches Bukhari
+        and Muslim (the two largest, most commonly available collections)
+        before giving up rather than fetching all six up front. Only ever
+        selects among hadith already returned by the API -- nothing here
+        alters or invents hadith text.
+        """
+        keywords = MOOD_KEYWORDS.get(mood.strip().lower())
+        if not keywords:
+            return None
+
+        if collection:
+            search_order = [collection]
+        else:
+            cached = [
+                c for c in HADITH_COLLECTIONS
+                if self._hadith_cache.get(f"collection_{c}_eng", self.hadith_ttl) is not None
+            ]
+            preferred = cached or ["bukhari", "muslim"]
+            search_order = preferred + [c for c in HADITH_COLLECTIONS if c not in preferred]
+
+        for c in search_order:
+            hadiths = self.fetch_hadiths_list(c)
+            if not hadiths:
+                continue
+            matches = [h for h in hadiths if any(kw in h["text"].lower() for kw in keywords)]
+            if matches:
+                chosen = random.choice(matches)
+                chosen["mood_matched"] = True
+                return chosen
+
+        return None
 
     def fetch_hadiths_list(self, collection: str) -> Optional[list]:
         """Return every hadith in a collection, formatted (for `deen inspire --list`).

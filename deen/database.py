@@ -497,28 +497,40 @@ def commit_habit(habit_name: str, note: str, is_makeup: bool = False, config: De
     timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # 2. Overwrite check: don't silently duplicate today's prayer commit.
+    #
+    # Declining the prompt must cancel the commit outright (raise, caught by
+    # __main__.commit() as a ValueError) rather than falling through to the
+    # plain INSERT below -- previously, answering "No" here still fell
+    # through to step 3 and silently created a second commit row for the
+    # same prayer/day, which is exactly the duplication this check exists
+    # to prevent.
     if habit_name in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"] and not is_makeup:
         if check_prayer_already_committed(habit_name):
-            if Confirm.ask(f"[yellow]⚠️  {habit_name} already logged. Update existing record?[/yellow]"):
-                with get_db() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """
-                        SELECT c.id FROM commits c
-                        JOIN habits h ON c.habit_id = h.id
-                        WHERE h.name = ? AND date(c.timestamp) = ?
-                        """,
-                        (habit_name, today_str),
-                    )
-                    row = cursor.fetchone()
-                    existing_id = row[0] if row else None
+            if not Confirm.ask(f"[yellow]⚠️  {habit_name} already logged. Update existing record?[/yellow]"):
+                raise ValueError(f"{habit_name} commit cancelled (already logged today).")
 
-                    if existing_id:
-                        cursor.execute(
-                            "UPDATE commits SET timestamp = ?, note = ? WHERE id = ?",
-                            (timestamp_str, note, existing_id),
-                        )
-                        return existing_id
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT c.id FROM commits c
+                    JOIN habits h ON c.habit_id = h.id
+                    WHERE h.name = ? AND date(c.timestamp) = ?
+                    """,
+                    (habit_name, today_str),
+                )
+                row = cursor.fetchone()
+                existing_id = row[0] if row else None
+
+                if existing_id:
+                    cursor.execute(
+                        "UPDATE commits SET timestamp = ?, note = ? WHERE id = ?",
+                        (timestamp_str, note, existing_id),
+                    )
+                    return existing_id
+                # Fell through: check_prayer_already_committed() said True but
+                # the row vanished before we could look up its id (rare race).
+                # Fall through to step 3 and insert fresh rather than crash.
 
     # 3. Standard insert (no overwrite happened).
     habit_id = get_habit_id(habit_name)

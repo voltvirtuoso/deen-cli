@@ -22,7 +22,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional, Tuple, TypeVar
+from typing import Any, Callable, NamedTuple, Optional, TypeVar
 
 from platformdirs import user_cache_dir
 
@@ -32,6 +32,25 @@ APP_NAME = "deen-cli"
 APP_AUTHOR = "deen-cli"
 
 T = TypeVar("T")
+
+
+class Fetched(NamedTuple):
+    """The one result type every fetch in deen-cli returns.
+
+    ``data`` is None when nothing could be obtained at all.
+    ``is_stale``: served from an *expired* cache entry because the live
+    fetch failed -- callers should tell the user it may be outdated.
+    ``is_offline``: served from bundled/offline data because neither the
+    live API nor any cache had anything.
+    """
+
+    data: Any = None
+    is_stale: bool = False
+    is_offline: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return self.data is not None
 
 
 def get_cache_dir() -> Path:
@@ -126,18 +145,16 @@ def get_or_fetch(
     ttl_seconds: float,
     fetch_fn: Callable[[], Optional[T]],
     allow_stale_on_error: bool = True,
-) -> Tuple[Optional[T], bool]:
-    """Fetch data using a cache -> live -> stale-cache fallback chain.
+) -> Fetched:
+    """Cache-first strategy: fresh cache -> live fetch -> stale cache.
 
-    Returns a ``(value, is_stale)`` tuple. ``is_stale`` is True when the
-    value came from an expired cache entry because a live fetch failed,
-    which callers should surface to the user (e.g. "using cached data from
-    2 hours ago") instead of silently pretending it's fresh.
+    Use this for static content (collections, listings, prayer times) where
+    a cached copy within its TTL is as good as a live one.
     """
     fresh = cache.get(key, ttl_seconds)
     if fresh is not None:
         logger.debug(f"Cache hit for '{key}'")
-        return fresh, False
+        return Fetched(fresh)
 
     try:
         result = fetch_fn()
@@ -148,7 +165,7 @@ def get_or_fetch(
     if result is not None:
         cache.set(key, result)
         logger.debug(f"Cache refreshed for '{key}'")
-        return result, False
+        return Fetched(result)
 
     if allow_stale_on_error:
         stale = cache.get_stale(key)
@@ -156,7 +173,37 @@ def get_or_fetch(
             age = cache.age_seconds(key)
             age_desc = f"{age / 3600:.1f}h old" if age is not None else "unknown age"
             logger.warning(f"Live fetch for '{key}' failed; using stale cache ({age_desc})")
-            return stale, True
+            return Fetched(stale, is_stale=True)
 
     logger.warning(f"No live or cached data available for '{key}'")
-    return None, False
+    return Fetched(None)
+
+
+def fetch_live_first(
+    cache: Cache,
+    key: str,
+    fetch_fn: Callable[[], Optional[T]],
+) -> Fetched:
+    """Live-first strategy: live fetch -> last known good value.
+
+    Use this for endpoints that are *meant* to return something different on
+    every call (random ayah / random dua). A TTL cache would defeat the
+    randomness, so we always try live and only remember the last success as
+    a fallback for when the network is down.
+    """
+    try:
+        result = fetch_fn()
+    except Exception as e:
+        logger.warning(f"Live fetch failed for '{key}': {e}")
+        result = None
+
+    if result is not None:
+        cache.set(key, result)
+        return Fetched(result)
+
+    stale = cache.get_stale(key)
+    if stale is not None:
+        logger.info(f"Serving last known-good value for '{key}' (live fetch failed)")
+        return Fetched(stale, is_stale=True)
+
+    return Fetched(None)

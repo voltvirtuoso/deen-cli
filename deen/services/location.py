@@ -2,9 +2,8 @@
 import logging
 from typing import Optional, Tuple
 
-import httpx
-
 from ..cache import Cache, get_or_fetch
+from ..http import http_get
 
 logger = logging.getLogger("deen.location")
 
@@ -23,14 +22,14 @@ class LocationService:
         result to avoid hitting three external providers on every command
         that needs a location hint.
         """
-        result, is_stale = get_or_fetch(
+        fetched = get_or_fetch(
             self.cache, "ip_geolocation", self.ttl_seconds, self._detect_via_providers
         )
-        if result is None:
+        if not fetched.ok:
             return None
-        if is_stale:
+        if fetched.is_stale:
             logger.info("Using cached (stale) IP location")
-        return tuple(result)  # cache round-trips through JSON as a list
+        return tuple(fetched.data)  # cache round-trips through JSON as a list
 
     def _detect_via_providers(self) -> Optional[Tuple[str, float, float]]:
         providers = [
@@ -55,7 +54,7 @@ class LocationService:
 
     def _detect_via_ipinfo(self) -> Optional[Tuple[str, float, float]]:
         """Most reliable free provider: ipinfo.io."""
-        resp = httpx.get("https://ipinfo.io/json", timeout=5)
+        resp = http_get("https://ipinfo.io/json", timeout=5, max_retries=0)
         if resp.status_code == 200:
             data = resp.json()
             loc = data.get("loc")
@@ -67,7 +66,7 @@ class LocationService:
 
     def _detect_via_ipgeolocation(self) -> Optional[Tuple[str, float, float]]:
         """Fallback: ipgeolocation.io."""
-        resp = httpx.get("https://api.ipgeolocation.io/ipgeo?fields=city,lat,lon", timeout=5)
+        resp = http_get("https://api.ipgeolocation.io/ipgeo?fields=city,lat,lon", timeout=5, max_retries=0)
         if resp.status_code == 200:
             data = resp.json()
             city = data.get("city") or "Unknown"
@@ -79,7 +78,7 @@ class LocationService:
 
     def _detect_via_ipapi(self) -> Optional[Tuple[str, float, float]]:
         """Fallback: ipapi.co (often rate-limited)."""
-        resp = httpx.get("https://ipapi.co/json/", timeout=5)
+        resp = http_get("https://ipapi.co/json/", timeout=5, max_retries=0)
         if resp.status_code == 200:
             data = resp.json()
             city = data.get("city") or "Unknown"
@@ -92,17 +91,12 @@ class LocationService:
     def search_location(self, query: str) -> Optional[Tuple[str, float, float]]:
         """Search location by name using Nominatim (not cached: an explicit user query)."""
         try:
-            resp = httpx.get(
+            resp = http_get(
                 f"{self.base_url}/search",
-                params={
-                    "q": query,
-                    "format": "json",
-                    "limit": 1,
-                },
-                headers={"User-Agent": "deen-cli/0.1 (https://github.com/voltvirtuoso/deen-cli)"},
+                params={"q": query, "format": "json", "limit": 1},
                 timeout=8,
+                max_retries=1,
             )
-            resp.raise_for_status()
             data = resp.json()
 
             if data:

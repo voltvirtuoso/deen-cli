@@ -5,7 +5,11 @@ from unittest.mock import Mock, patch
 from typer.testing import CliRunner
 
 from deen.arabic import prepare_arabic
-from deen.__main__ import app, inspire
+from deen.cache import Fetched
+from helpers import FakeConfig, IsolatedHomeTestCase
+from deen.__main__ import app
+from deen.cli import _common
+from deen.cli.inspire import inspire
 from deen.content import ContentEngine
 
 
@@ -25,7 +29,7 @@ class ArabicRenderingTests(unittest.TestCase):
 
     def test_surah_listing_uses_shared_arabic_parser(self):
         api = Mock()
-        api.fetch_surah_list.return_value = (
+        api.fetch_surah_list.return_value = Fetched(
             [
                 {
                     "number": 1,
@@ -34,49 +38,92 @@ class ArabicRenderingTests(unittest.TestCase):
                     "englishNameTranslation": "The Opening",
                     "numberOfAyahs": 7,
                 }
-            ],
-            False,
+            ]
         )
 
-        with patch("deen.__main__.ApiService", return_value=api):
-            result = CliRunner().invoke(app, ["surahs"])
+        with patch.object(_common, "_config", Mock(is_initialized=True)), patch(
+            "deen.cli.quran.ApiService", return_value=api
+        ):
+            result = CliRunner().invoke(app, ["quran", "list"])
+            legacy = CliRunner().invoke(app, ["surahs"])
 
         self.assertEqual(result.exit_code, 0, result.stdout)
         self.assertIn(prepare_arabic("الفاتحة"), result.stdout)
+        self.assertEqual(legacy.exit_code, 0, legacy.stdout)
+        self.assertIn(prepare_arabic("الفاتحة"), legacy.stdout)
 
 
 class CommandSeparationTests(unittest.TestCase):
     def test_inspire_has_no_full_list_option(self):
         self.assertNotIn("list_all", inspect.signature(inspire).parameters)
 
-    def test_dedicated_read_commands_are_registered(self):
-        names = {
-            command.name or command.callback.__name__
-            for command in app.registered_commands
-        }
-        self.assertTrue({"read-surah", "read-hadith", "read-dua", "hadith-categories"}.issubset(names))
+    def test_content_groups_and_legacy_aliases_are_registered(self):
+        top = {c.name or c.callback.__name__ for c in app.registered_commands}
+        groups = {g.name for g in app.registered_groups}
+        self.assertTrue({"quran", "hadith", "dua", "config"}.issubset(groups))
+        self.assertTrue({"read-surah", "read-hadith", "read-dua", "hadith-categories", "categories", "surahs"}.issubset(top))
 
-    def test_read_surah_accepts_positional_number(self):
-        engine = Mock()
-        with patch("deen.__main__.DeenConfig") as config_cls, patch(
-            "deen.__main__.ContentEngine", return_value=engine
-        ):
-            config_cls.return_value.is_initialized = True
-            result = CliRunner().invoke(app, ["read-surah", "101", "--per-page", "5"])
+    def test_old_names_are_hidden_from_help(self):
+        out = CliRunner().invoke(app, ["--help"]).stdout
+        for old in ("read-surah", "read-hadith", "read-dua", "hadith-categories", "surahs"):
+            self.assertNotIn(f"│ {old} ", out)  # a command row, not a mention in prose
 
-        self.assertEqual(result.exit_code, 0, result.stdout)
-        engine.display_ayah_list.assert_called_once_with("101", page=1, per_page=5)
-
-    def test_read_commands_expose_required_specific_flags(self):
-        runner = CliRunner()
-        for command, flag in (
-            ("read-surah", "--surah"),
-            ("read-hadith", "--collection"),
-            ("read-dua", "--category"),
-        ):
-            result = runner.invoke(app, [command, "--help"])
+    def test_read_surah_accepts_positional_number_new_and_old(self):
+        for argv in (["quran", "read", "101", "--per-page", "5"], ["read-surah", "101", "--per-page", "5"]):
+            engine = Mock()
+            with patch.object(_common, "_config", Mock(is_initialized=True)), patch(
+                "deen.cli.quran.ContentEngine", return_value=engine
+            ):
+                result = CliRunner().invoke(app, argv)
             self.assertEqual(result.exit_code, 0, result.stdout)
-            self.assertIn(flag, result.stdout)
+            engine.display_ayah_list.assert_called_once_with("101", page=1, per_page=5)
+
+    def test_positional_scope_is_forwarded_the_same_way_for_all_random_commands(self):
+        cases = [
+            (["quran", "random", "36"], "deen.cli.quran.ContentEngine", "ayah", "36"),
+            (["hadith", "random", "bukhari"], "deen.cli.hadith.ContentEngine", "hadith", "bukhari"),
+            (["dua", "random", "morning"], "deen.cli.dua.ContentEngine", "dua", "morning"),
+        ]
+        api = Mock()
+        api.fetch_dua_categories.return_value = Fetched({"shortcuts": ["morning"], "categories": []})
+        for argv, target, ctype, scope in cases:
+            engine = Mock()
+            with patch.object(_common, "_config", Mock(is_initialized=True)), patch(
+                target, return_value=engine
+            ), patch("deen.cli.dua.ApiService", return_value=api):
+                result = CliRunner().invoke(app, argv)
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            kwargs = engine.display_content.call_args.kwargs
+            self.assertEqual((kwargs["content_type"], kwargs["category"]), (ctype, scope), argv)
+
+    def test_old_read_hadith_flags_still_work(self):
+        engine = Mock()
+        with patch.object(_common, "_config", Mock(is_initialized=True)), patch(
+            "deen.cli.hadith.ContentEngine", return_value=engine
+        ):
+            result = CliRunner().invoke(app, ["read-hadith", "-c", "muslim", "--category", "3", "--per-page", "2"])
+        self.assertEqual(result.exit_code, 0, result.stdout)
+        self.assertEqual(engine.display_hadith_list.call_args.args, ("muslim",))
+        self.assertEqual(engine.display_hadith_list.call_args.kwargs["category"], "3")
+
+    def test_old_names_print_a_pointer_to_the_new_one(self):
+        with patch.object(_common, "_config", Mock(is_initialized=True)), patch("deen.cli.dua.ContentEngine"):
+            result = CliRunner().invoke(app, ["read-dua", "-c", "morning"])
+        self.assertIn("deen dua read", result.output)
+
+    def test_hadith_list_without_collection_shows_collections(self):
+        with patch.object(_common, "_config", Mock(is_initialized=True)):
+            result = CliRunner().invoke(app, ["hadith", "list"])
+        self.assertEqual(result.exit_code, 0, result.stdout)
+        self.assertIn("Sahih al-Bukhari", result.stdout)
+
+    def test_read_commands_take_their_target_as_a_positional_argument(self):
+        for argv, metavar in ((["quran", "read", "--help"], "SURAH"),
+                              (["hadith", "read", "--help"], "COLLECTION"),
+                              (["dua", "read", "--help"], "CATEGORY")):
+            result = CliRunner().invoke(app, argv)
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertIn(metavar, result.stdout)
 
     def test_inspire_help_does_not_advertise_full_list_mode(self):
         result = CliRunner().invoke(app, ["inspire", "--help"])
@@ -84,9 +131,9 @@ class CommandSeparationTests(unittest.TestCase):
         self.assertNotIn("--list", result.stdout)
 
     def test_hadith_help_exposes_search_category_number_and_paging(self):
-        result = CliRunner().invoke(app, ["read-hadith", "--help"])
+        result = CliRunner().invoke(app, ["hadith", "read", "--help"])
         self.assertEqual(result.exit_code, 0, result.stdout)
-        for flag in ("--search", "--category", "--number", "--page", "--per-page"):
+        for flag in ("--search", "--section", "--number", "--page", "--per-page"):
             self.assertIn(flag, result.stdout)
 
 
@@ -155,3 +202,17 @@ class HadithFilteringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RandomAyahScopeTests(IsolatedHomeTestCase):
+    def test_unavailable_surah_is_announced_not_silently_replaced(self):
+        from deen import content as content_module
+
+        engine = content_module.ContentEngine(FakeConfig())
+        engine.api = Mock()
+        engine.api.fetch_ayahs_by_surah.return_value = None
+        engine.api.fetch_random_ayah.return_value = {"id": "13:28", "arabic": "x", "translation": "t"}
+        with patch.object(content_module, "console") as con:
+            engine.get_random_ayah(category="94")
+        printed = " ".join(str(c.args[0]) for c in con.print.call_args_list)
+        self.assertIn("Surah 94", printed)

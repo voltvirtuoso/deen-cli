@@ -7,20 +7,20 @@ from .arabic import prepare_arabic
 from .pager import page_text
 from rich import box
 from rich.cells import cell_len
-from rich.console import Console, Group
+from rich.console import Group
 from rich.panel import Panel
 from rich.text import Text
 
 from .config import DeenConfig
 from .services.api import ApiService
+from .ui import console
 
 logger = logging.getLogger("deen.content")
-console = Console()
 
 
 class ContentEngine:
-    def __init__(self):
-        self.config = DeenConfig()
+    def __init__(self, config: Optional[DeenConfig] = None):
+        self.config = config or DeenConfig()
         self.api = ApiService(self.config)
 
     # ------------------------------------------------------------------
@@ -235,7 +235,12 @@ class ContentEngine:
                 import random as _random
                 ayah = _random.choice(surah_ayahs)
             else:
-                logger.warning(f"Could not fetch Surah {category} for --category; falling back to a random ayah")
+                logger.warning(f"Could not fetch Surah {category}; falling back to a random ayah")
+                # Say so on screen: silently showing an ayah from a different surah is misleading.
+                console.print(
+                    f"[yellow]⚠️  Couldn't load Surah {category.strip()} (API unreachable, nothing cached), "
+                    "so this ayah is from anywhere in the Qur'an.[/yellow]"
+                )
 
         if ayah is None:
             ayah = self.api.fetch_random_ayah()
@@ -267,7 +272,7 @@ class ContentEngine:
         collection -- the full collection is read with ``read-hadith``.
 
         ``mood`` is resolved by the API layer via a keyword search over
-        real hadith text (see MOOD_KEYWORDS in services/api.py); it was
+        real hadith text (see MOOD_KEYWORDS in services/hadith.py); it was
         previously accepted here only to be printed as a label and had no
         effect on which hadith was actually returned.
         """
@@ -313,17 +318,17 @@ class ContentEngine:
         }
 
     def list_duas(self, category: str) -> list:
-        """Get every dua in a category (for `deen read-dua --category ...`)."""
+        """Get every dua in a category (for `deen dua read <category>`)."""
         duas = self.api.fetch_duas_list(category)
         if not duas:
             raise RuntimeError(
                 f"No duas found for category '{category}' (API unreachable and nothing cached). "
-                "Run 'deen categories' to see valid category numbers/shortcuts."
+                "Run 'deen dua list' to see valid category numbers/shortcuts."
             )
         return duas
 
     def list_hadiths(self, collection: str) -> list:
-        """Get every hadith in a collection (for `deen read-hadith --collection ...`)."""
+        """Get every hadith in a collection (for `deen hadith read <collection>`)."""
         hadiths = self.api.fetch_hadiths_list(collection)
         if not hadiths:
             raise RuntimeError(
@@ -333,12 +338,12 @@ class ContentEngine:
         return hadiths
 
     def list_ayahs(self, surah: str) -> list:
-        """Get every ayah in a surah (for `deen read-surah --surah ...`)."""
+        """Get every ayah in a surah (for `deen quran read <surah>`)."""
         ayahs = self.api.fetch_ayahs_by_surah(surah)
         if not ayahs:
             raise RuntimeError(
                 f"No ayahs found for surah '{surah}' (API unreachable, nothing cached, or not a "
-                "valid surah number 1-114). Run 'deen surahs' to see the full list."
+                "valid surah number 1-114). Run 'deen quran list' to see the full list."
             )
         return ayahs
 

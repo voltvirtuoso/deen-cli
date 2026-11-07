@@ -4,11 +4,11 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
-from rich.console import Console
-from rich.prompt import Confirm
 
 from .config import DeenConfig
+from .errors import UserError
 
 logger = logging.getLogger("deen.database")
 
@@ -34,6 +34,42 @@ def get_db():
         raise
     finally:
         conn.close()
+
+
+_OFFLINE_COLUMNS = ("text_arabic", "text_english", "source", "grade", "transliteration", "category")
+
+
+def fetch_offline_rows(
+    content_type: str,
+    category: Optional[str] = None,
+    *,
+    random_order: bool = False,
+    limit: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Read rows from the bundled offline content pool (``content_fallbacks``).
+
+    The single query used for every offline fallback (hadith, ayah, dua).
+    Returns plain dicts keyed by column name; empty list if there are none
+    or the database can't be read. Shaping rows into API-style results is
+    the caller's job (see ``deen.services.offline``).
+    """
+    sql = f"SELECT {', '.join(_OFFLINE_COLUMNS)} FROM content_fallbacks WHERE content_type = ?"
+    params: list = [content_type]
+    if category:
+        sql += " AND LOWER(category) = LOWER(?)"
+        params.append(category)
+    if random_order:
+        sql += " ORDER BY RANDOM()"
+    if limit:
+        sql += " LIMIT ?"
+        params.append(limit)
+    try:
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+    except Exception as e:
+        logger.warning(f"Offline {content_type} lookup failed: {e}")
+        return []
+    return [dict(zip(_OFFLINE_COLUMNS, row)) for row in rows]
 
 
 _SCHEMA_CHECKED = False
@@ -327,7 +363,7 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_commits_timestamp ON commits(timestamp)")
 
 
-def check_existing_data() -> dict:
+def check_existing_data(config: DeenConfig) -> dict:
     """Check if config or database already exists."""
     config_path = Path.home() / ".deen" / "config.toml"
     db_path = Path.home() / ".deen" / "data.db"
@@ -335,7 +371,7 @@ def check_existing_data() -> dict:
     return {
         "config_exists": config_path.exists(),
         "db_exists": db_path.exists(),
-        "is_initialized": config_path.exists() and DeenConfig().is_initialized if config_path.exists() else False,
+        "is_initialized": config_path.exists() and config.is_initialized,
     }
 
 
@@ -448,38 +484,22 @@ def check_prayer_already_committed(prayer_name: str) -> bool:
         return cursor.fetchone()[0] > 0
 
 
-def _detect_current_prayer(config: DeenConfig) -> str:
-    """Best-effort detection of the current prayer window from live/cached prayer times."""
-    from .services.api import ApiService  # local import to avoid circular dependency
+def commit_habit(
+    habit_name: str,
+    note: str,
+    is_makeup: bool = False,
+    *,
+    current_prayer: Optional[Callable[[], str]] = None,
+    confirm_overwrite: Optional[Callable[[str], bool]] = None,
+) -> int:
+    """Log a habit completion. Updates today's existing record for a prayer instead of duplicating it.
 
-    lat, lon = config.get("user.latitude"), config.get("user.longitude")
-    if not (lat and lon):
-        return "Isha"
-
-    now = datetime.now()
-    api = ApiService(config)
-    prayers, _is_stale = api.fetch_prayer_times(float(lat), float(lon), now.strftime("%Y-%m-%d"))
-    if not prayers:
-        return "Isha"
-
-    prayer_order = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
-    current_time = now.strftime("%H:%M")
-    current_prayer = "Isha"
-    for i, prayer in enumerate(prayer_order):
-        p_time = prayers.get(prayer)
-        if p_time and current_time >= p_time:
-            if i + 1 < len(prayer_order):
-                if current_time < prayers.get(prayer_order[i + 1], "23:59"):
-                    current_prayer = prayer
-                    break
-            else:
-                current_prayer = prayer
-                break
-    return current_prayer
-
-
-def commit_habit(habit_name: str, note: str, is_makeup: bool = False, config: DeenConfig = None) -> int:
-    """Log a habit completion. Updates today's existing record for a prayer instead of duplicating it."""
+    This layer does no I/O of its own beyond SQLite; the caller supplies:
+      current_prayer:    () -> prayer name, used when the habit is just "salah" and the
+                         note doesn't name one. Defaults to "Isha".
+      confirm_overwrite: (prayer name) -> bool, asked when that prayer is already logged
+                         today. Without one, an existing entry is never overwritten.
+    """
 
     # 1. Prayer detection: if the user just said "salah"/"prayer"/"namaz",
     #    figure out which one from the note text, falling back to the
@@ -488,8 +508,8 @@ def commit_habit(habit_name: str, note: str, is_makeup: bool = False, config: De
         detected = normalize_prayer_name(note)
         if detected:
             habit_name = detected
-        elif config:
-            habit_name = _detect_current_prayer(config)
+        elif current_prayer:
+            habit_name = current_prayer()
         else:
             habit_name = "Isha"
 
@@ -498,16 +518,16 @@ def commit_habit(habit_name: str, note: str, is_makeup: bool = False, config: De
 
     # 2. Overwrite check: don't silently duplicate today's prayer commit.
     #
-    # Declining the prompt must cancel the commit outright (raise, caught by
-    # __main__.commit() as a ValueError) rather than falling through to the
+    # Declining the prompt must cancel the commit outright (raise UserError, which the
+    # CLI guard shows as a warning) rather than falling through to the
     # plain INSERT below -- previously, answering "No" here still fell
     # through to step 3 and silently created a second commit row for the
     # same prayer/day, which is exactly the duplication this check exists
     # to prevent.
     if habit_name in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"] and not is_makeup:
         if check_prayer_already_committed(habit_name):
-            if not Confirm.ask(f"[yellow]⚠️  {habit_name} already logged. Update existing record?[/yellow]"):
-                raise ValueError(f"{habit_name} commit cancelled (already logged today).")
+            if not (confirm_overwrite and confirm_overwrite(habit_name)):
+                raise UserError(f"{habit_name} commit cancelled (already logged today).")
 
             with get_db() as conn:
                 cursor = conn.cursor()
@@ -541,3 +561,13 @@ def commit_habit(habit_name: str, note: str, is_makeup: bool = False, config: De
             (habit_id, note, int(is_makeup), timestamp_str),
         )
         return cursor.lastrowid
+
+
+def get_commit_habit_name(commit_id: int) -> Optional[str]:
+    """The habit name a commit was recorded under (e.g. 'Dhuhr' after salah auto-detection)."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT h.name FROM commits c JOIN habits h ON c.habit_id = h.id WHERE c.id = ?",
+            (commit_id,),
+        ).fetchone()
+    return row[0] if row else None

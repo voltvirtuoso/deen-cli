@@ -2,9 +2,8 @@
 import logging
 from typing import Dict, List, Optional, Tuple
 
-import httpx
-
-from ..cache import Cache, get_or_fetch
+from ..cache import Cache, Fetched, get_or_fetch
+from ..http import http_get
 
 logger = logging.getLogger("deen.metadata")
 
@@ -45,21 +44,22 @@ class MetadataService:
         self.config = config
         self.base_url = config.get("api.aladhan_base_url", "https://api.aladhan.com/v1")
         self.timeout = config.get("api.timeout_seconds", 10)
+        self.max_retries = int(config.get("api.max_retries", 2))
         self.ttl_seconds = float(config.get("cache.metadata_ttl_hours", 168)) * 3600
         self.cache = Cache("metadata", enabled=config.get("cache.enable", True))
 
-    def get_calculation_methods(self, location_hint: str = "") -> Tuple[Optional[List[Dict]], bool]:
+    def get_calculation_methods(self, location_hint: str = "") -> Fetched:
         """Fetch calculation methods, using the cache -> live -> stale-cache -> bundled-offline chain.
 
-        Returns (methods, is_offline_fallback). ``is_offline_fallback`` is
-        True when we had to fall back to the bundled static list rather than
-        anything actually fetched from the API (live or cached).
+        ``is_offline`` is True when we fell back to the bundled static list
+        rather than anything fetched from the API (live or cached).
         """
         location_lower = location_hint.lower() if location_hint else ""
 
-        raw_methods, is_stale = get_or_fetch(
+        fetched = get_or_fetch(
             self.cache, "calculation_methods", self.ttl_seconds, self._fetch_methods_raw
         )
+        raw_methods = fetched.data
 
         if raw_methods is None:
             logger.warning("No live or cached calculation methods; using bundled offline list")
@@ -69,9 +69,9 @@ class MetadataService:
                 0 if any(r in location_lower for r in x["is_default_for"]) else 1,
                 int(x["id"]) if x["id"].isdigit() else 999,
             ))
-            return methods, True
+            return Fetched(methods, is_offline=True)
 
-        if is_stale:
+        if fetched.is_stale:
             logger.info("Calculation methods served from stale cache")
 
         methods = []
@@ -91,22 +91,17 @@ class MetadataService:
             })
 
         if not methods:
-            return None, False
+            return Fetched(None)
 
         methods.sort(key=lambda x: (
             0 if any(r in location_lower for r in x["is_default_for"]) else 1,
             int(x["id"]) if x["id"].isdigit() else 999,
         ))
 
-        return methods, False
+        return Fetched(methods, is_stale=fetched.is_stale)
 
     def _fetch_methods_raw(self) -> Optional[Dict]:
-        resp = httpx.get(
-            f"{self.base_url}/methods",
-            headers={"User-Agent": "deen-cli/0.1"},
-            timeout=self.timeout,
-        )
-        resp.raise_for_status()
+        resp = http_get(f"{self.base_url}/methods", timeout=self.timeout, max_retries=self.max_retries)
         data = resp.json().get("data", {})
         return data or None
 

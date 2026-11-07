@@ -7,6 +7,57 @@ and versioning follows [Semantic Versioning](https://semver.org/) —
 `MAJOR.MINOR.PATCH`, where MAJOR = breaking changes, MINOR = backward-compatible
 features/fixes, PATCH = backward-compatible bug fixes only.
 
+## [0.5.0] - 2026-11-07
+
+### Added
+- **Find a dua by name.** `deen dua read istikhara`, `deen dua read sleep`,
+  `deen dua random travel` etc. now look the name up in the 132 Hisn al-Muslim
+  chapter titles (English and Arabic, plus common transliterations such as
+  istikhara, wudu, adhan). One match is used directly; several are listed so you
+  can pick by number. Numbers (`26`) and the API's named shortcuts (`morning`,
+  `forgiveness`, ...) work as before.
+- `deen dua list --search WORD` filters the category table.
+- `tests/test_release.py` keeps `deen.__version__`, `pyproject.toml` and the
+  changelog in step.
+
+### Changed
+- **Command surface unified.** Qur'an, hadith and dua now each have the same
+  three verbs, and the positional argument is always the target:
+  `deen quran|hadith|dua list | read <TARGET> | random [TARGET]`.
+  Replaces the scattered `surahs`, `categories`, `hadith-categories`,
+  `read-surah`, `read-hadith`, `read-dua` (still working as hidden aliases with
+  a one-line pointer to the new name). `hadith read --category` is now `--section`.
+  `--help` is grouped into Setup, Daily habits and Content.
+- Internal restructure so there is one way to do each thing (see "Conventions"
+  in the README). No new features.
+  - All HTTP goes through `deen.http.http_get` (location and metadata lookups
+    previously bypassed retries, redirects and the shared User-Agent).
+  - Every fetch returns a single `Fetched(data, is_stale, is_offline)` type;
+    caching uses two named strategies, `get_or_fetch` and `fetch_live_first`.
+  - `services/api.py` (889 lines) split into `quran`, `hadith`, `dua`,
+    `prayer`; offline fallback SQL consolidated into `database.py`.
+  - `__main__.py` (785 lines) split into `deen/cli/*`. One `@command` guard
+    now applies the init check and error handling uniformly; one shared
+    config and console.
+  - Every command, including the old `surahs` / `categories`, now requires
+    `deen init` (except `init` and `config *`).
+  - A declined duplicate prayer commit now exits with status 1 (was 0).
+  - Error output for invalid input is uniformly a yellow `⚠️` warning.
+- Added the `dev` extra (`pip install -e ".[dev]"`) the README already described.
+- Added `tests/` coverage for HTTP, cache strategies, services (incl. offline
+  fallbacks), CLI guard behaviour, and the conventions above.
+
+### Fixed
+- Asking for a specific surah while the API was unreachable silently showed an
+  ayah from a different surah; it now says so.
+- 4xx HTTP responses are no longer retried (the old retry loop contradicted
+  its own docstring and retried 404s with backoff).
+- `deen log` printed makeup entries with literal `[yellow](M)[/yellow]`
+  text instead of a yellow "(M)".
+
+### Removed
+- Empty `deen/utils.py` and the unused `ApiService._clean_html`.
+
 ## [0.4.2] - 2026-08-26
 
 ### Changed

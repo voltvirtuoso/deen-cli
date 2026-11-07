@@ -26,8 +26,8 @@
 - **Hadith**: Curated from *Sahih al-Bukhari*, *Sahih Muslim*, and other authenticated collections (Arabic text included where the collection publishes an Arabic edition; no transliteration exists for hadith at the source, so none is shown — nothing is invented to fill that gap)
 - **Dua**: Verified supplications from *Hisn al-Muslim*, with Arabic, transliteration & translation (live API, offline fallback)
 - Mood-aware hadith: `deen inspire --type hadith --mood stressed` keyword-matches real, authenticated hadith text on themes tied to the mood (no hadith source tags narrations by mood, so this is an honest workaround, not an API feature — falls back to a clearly-labeled random pick if nothing matches)
-- Discover and read: `deen categories` lists dua categories, `deen surahs` lists Quran chapters, and dedicated `deen read-surah`, `deen read-hadith`, and `deen read-dua` commands show compact pages instead of flooding the terminal. `deen inspire` is intentionally random-only.
-- Hadith navigation: `deen hadith-categories --collection bukhari` shows the collection's own source sections; `read-hadith` can then filter by section, English text, narrator, or exact hadith number.
+- One shape for all content: `deen quran`, `deen hadith` and `deen dua` each have the same three verbs, `list`, `read` and `random`, and the thing you're looking at is always the positional argument (`deen quran read 36`, `deen hadith read bukhari`, `deen dua read morning`). `deen inspire` is the quick random-only shortcut.
+- Hadith navigation: `deen hadith list bukhari` shows the collection's own source sections; `deen hadith read bukhari --section 2` then reads one, and you can also filter by English text, narrator, or exact hadith number.
 
 ### 📊 Habit Tracking (Git-Style)
 ```bash
@@ -88,13 +88,10 @@ The interactive wizard will:
 | `status` | Show today's prayer times with completion status | `deen status` |
 | `commit` | Log a spiritual habit completion | `deen commit -t salah -m "on time"` |
 | `log` | View recent habit history | `deen log --days 14` |
-| `inspire` | Get one random spiritual item | `deen inspire -t hadith -m grateful` |
-| `read-surah` | Read every ayah in a complete surah | `deen read-surah --surah 36` |
-| `read-hadith` | Read a page of hadiths with optional filters | `deen read-hadith --collection bukhari --page 1` |
-| `hadith-categories` | List source sections for a collection | `deen hadith-categories --collection bukhari` |
-| `read-dua` | Read every dua in a category | `deen read-dua --category morning` |
-| `categories` | List all dua categories (fetched live) | `deen categories` |
-| `surahs` | List all 114 surahs (fetched live) | `deen surahs` |
+| `inspire` | Quick random item (shortcut for `<type> random`) | `deen inspire -t hadith -m grateful` |
+| `quran` | `list` surahs · `read` a surah · `random` ayah | `deen quran read 36` |
+| `hadith` | `list` collections/sections · `read` · `random` | `deen hadith read bukhari --section 2` |
+| `dua` | `list` categories · `read` a category · `random` | `deen dua read morning` |
 | `config` | View/change settings (logging, cache, endpoints) | `deen config show` |
 
 ### `deen commit` Options
@@ -104,49 +101,84 @@ The interactive wizard will:
 --makeup            Mark as makeup prayer/habit
 ```
 
-### `deen inspire` Options
+### Quran, hadith & dua: the same three verbs
+
+| | `list` | `read` | `random` |
+|---|---|---|---|
+| **`deen quran`** | all 114 surahs | `read <SURAH>` | `random [SURAH]` |
+| **`deen hadith`** | the collections, or `list <COLLECTION>` for its sections | `read <COLLECTION>` | `random [COLLECTION]` |
+| **`deen dua`** | all categories + shortcuts | `read <CATEGORY>` | `random [CATEGORY]` |
+
 ```bash
--t, --type TEXT     Content type: ayah, hadith, dua [default: hadith]
--m, --mood TEXT     Hadith-only. Emotional state: stressed, anxious, grateful, sad,
-                    angry, lonely, tired, doubtful. Keyword-matches real hadith text;
-                    falls back to a labeled random pick if nothing matches.
--c, --category TEXT For dua: a category number/shortcut (see `deen categories`),
-                    for hadith: a collection name, or for ayah: a surah number 1-114.
-                    In every case it only scopes the random item.
--f, --fresh         Force fresh content (bypass cache)
+deen quran list                       # all surahs
+deen quran read 1                     # Al-Fatihah, ten ayahs per page
+deen quran read 36 --per-page 5 --page 2
+deen quran random 36                  # a random ayah from Ya-Sin
+
+deen hadith list                      # the six collections
+deen hadith list bukhari              # Bukhari's source sections
+deen hadith read bukhari --section 2  # only section 2
+deen hadith read muslim --search intentions
+deen hadith read bukhari --number 1   # one exact hadith
+deen hadith random --mood grateful
+
+deen dua list
+deen dua read morning
+deen dua random morning
 ```
 
-`inspire` has no full-list mode. Use the dedicated readers when you want
-complete content:
+#### Finding a specific dua
 
-### `deen read-surah`
+Hisn al-Muslim has 132 chapters. You can reach any of them three ways:
+
 ```bash
-deen read-surah --surah 1 --page 1       # Read Al-Fatihah, ten ayahs per page
-deen read-surah -s 36 --per-page 5         # Read five ayahs at a time
-deen read-surah -s 2 --page 3              # Jump to a later page
+deen dua list                     # all chapters + the named shortcuts
+deen dua list --search sleep      # filter the table by name
+deen dua read istikhara           # by name (looked up in the chapter titles)
+deen dua read 26                  # by number
+deen dua read morning             # by shortcut
 ```
 
-### `deen read-hadith`
-```bash
-deen hadith-categories --collection bukhari       # Show Bukhari's source sections
-deen read-hadith --collection bukhari --category 2 # Read only section 2
-deen read-hadith -c muslim --search intentions    # Search the English text
-deen read-hadith -c bukhari --number 1             # Read one exact hadith
-```
+The API's own shortcuts are `morning`, `evening`, `after-prayer`, `before-sleep`,
+`waking-up`, `prayer`, `mosque`, `travel`, `food`, `home`, `anxiety`,
+`protection`, `forgiveness` and `hajj`. Everything else (istikhara, wudu,
+adhan, debt, …) is found by name: `deen dua read istikhara` resolves to chapter
+26, "For seeking guidance in forming a decision or choosing the proper course".
+If a name matches several chapters you get the list and pick one by number.
+The same lookup works for `deen dua random <name>` and `deen inspire -t dua -c <name>`.
 
-`--search` performs a case-insensitive text search across the English hadith,
-narrator, and source section title. `--category` accepts a source section number
-or part of its title. `--number` is an exact collection hadith number. Results
-are shown ten at a time by default; use `--page` and `--per-page` to navigate.
-Each selected page opens in an interactive `less` pager when available, then
+Shared options on every `read`: `--page`, `--per-page` (default 10). Shared on
+every `random`: `-f/--fresh`. `hadith read` also takes `--section` (number or
+part of the title), `--number/-n` and `--search` (case-insensitive across the
+English text, narrator and section title). `hadith random` takes `--mood/-m`:
+stressed, anxious, grateful, sad, angry, lonely, tired, doubtful. No source tags
+hadith by mood, so this keyword-matches real authenticated text and says so
+when nothing matches.
+
+Each page of a `read` opens in an interactive `less` pager when available, then
 `bat`, with a built-in scrolling fallback. Pager input uses a UTF-8 pipe so
 Arabic and other Unicode characters remain intact on Windows.
 
-### `deen read-dua`
+### `deen commit` Options
 ```bash
-deen read-dua --category morning
-deen read-dua -c 1 --page 1
+-t, --type TEXT     Habit type: salah, quran, dhikr, fasting, custom [default: quran]
+-m, --message TEXT  Commit message (required) [e.g., "Juz 1", "on time"]
+--makeup            Mark as makeup prayer/habit
 ```
+
+### `deen inspire`
+A shortcut for `deen quran|hadith|dua random`:
+```bash
+-t, --type TEXT     ayah, hadith, dua [default: hadith]
+-m, --mood TEXT     Hadith only (see above)
+-c, --category TEXT Narrow the pick: surah number (ayah), collection (hadith) or dua category
+-f, --fresh         Skip the cache
+```
+
+### Old command names
+`read-surah`, `read-hadith`, `read-dua`, `hadith-categories`, `categories` and
+`surahs` still work (hidden from `--help`, with a one-line pointer to the new
+name) so existing scripts keep running. They will be removed in a future major version.
 
 ---
 
@@ -188,16 +220,34 @@ Next: Asr in 02:14:33
 ```
 deen-cli/
 ├── deen/
-│   ├── __init__.py          # CLI entry point (Typer app)
+│   ├── __main__.py          # assembles the Typer app (no commands live here)
+│   ├── cli/
+│   │   ├── app.py           # Typer apps + the @command decorator
+│   │   ├── _common.py       # get_config(), init/error guard, shared option types
+│   │   ├── setup.py         # init
+│   │   ├── quran.py  hadith.py  dua.py   # `deen quran|hadith|dua list|read|random`
+│   │   ├── inspire.py       # quick random shortcut
+│   │   ├── legacy.py        # deprecated old command names (hidden)
+│   │   ├── habits.py        # status, commit, log
+│   │   └── settings.py      # config show/set/path
+│   ├── services/
+│   │   ├── api.py           # ApiService facade (composed from the modules below)
+│   │   ├── base.py          # config, TTLs, caches, HTTP shared by all services
+│   │   ├── quran.py  hadith.py  dua.py  prayer.py
+│   │   ├── offline.py       # bundled fallback content, shaped like live results
+│   │   ├── location.py      # multi-provider geolocation
+│   │   └── metadata.py      # prayer methods & madhab metadata
+│   ├── http.py              # the only place HTTP requests are made
+│   ├── cache.py             # Fetched result type + get_or_fetch / fetch_live_first
 │   ├── config.py            # TOML config management
-│   ├── database.py          # SQLite schema & queries
+│   ├── database.py          # SQLite schema & ALL queries
+│   ├── errors.py            # UserError
+│   ├── ui.py                # the shared Rich console
 │   ├── arabic.py            # Shared Arabic shaping/bidi normalization
 │   ├── content.py           # Content rendering engine (RTL-safe)
-│   └── services/
-│       ├── api.py           # Unified API client (Quran, Hadith, Prayer)
-│       ├── location.py      # Multi-provider geolocation
-│       └── metadata.py      # Prayer methods & madhab metadata
-├── pyproject.toml           # Project metadata & dependencies
+│   └── pager.py             # less/bat/built-in paging
+├── tests/
+├── pyproject.toml
 └── README.md
 ```
 
@@ -226,12 +276,33 @@ python -m deen status
 deen status  # If installed in editable mode
 ```
 
+### Conventions
+
+There is one way to do each of these. `tests/test_conventions.py` fails if a
+second way sneaks back in.
+
+| To do this…                 | Use this                                                | Not this                                  |
+|-----------------------------|---------------------------------------------------------|-------------------------------------------|
+| Make an HTTP request        | `deen.http.http_get`                                    | `httpx.get(...)`                          |
+| Cache an API result         | `get_or_fetch` (static data) / `fetch_live_first` (random) | hand-written `try/except` + `get_stale` |
+| Return "maybe stale/offline" | `deen.cache.Fetched(data, is_stale, is_offline)`        | ad-hoc `(data, bool)` tuples              |
+| Read config                 | `get_config()` in the CLI; pass `config` into services  | `DeenConfig()`                            |
+| Print                       | `from deen.ui import console`                           | `Console()`                               |
+| Add a command               | `@command("name")` from `deen.cli.app`                  | `@app.command()`                          |
+| Report a user mistake       | `raise UserError("...")`                                | `console.print(...)` + `raise typer.Exit` |
+| Query SQLite                | a function in `deen/database.py`                        | SQL in CLI or service code                |
+| Page / per-page / fresh options, and the SURAH / COLLECTION / CATEGORY arguments | `Page`, `PerPage`, `Fresh`, `SurahArg`, … in `cli/_common.py` | re-declaring `typer.Option(...)` |
+| Name a content command     | `deen <quran\|hadith\|dua> <list\|read\|random> [TARGET]` | a new top-level `read-foo` / `foos` command |
+
+Every command requires `deen init` first (the guard checks this), except
+`init` and `config *`, which opt out with `requires_init=False`.
+
 ### Project Dependencies
 ```toml
 # Core
 typer[all] >= 0.9.0      # CLI framework
 rich >= 13.0.0           # Terminal formatting
-httpx >= 0.24.0          # Async HTTP client
+httpx >= 0.24.0          # HTTP client (sync; used only via deen/http.py)
 tomli >= 2.0.0           # TOML parsing
 tomli-w >= 1.0.0         # TOML writing
 

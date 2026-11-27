@@ -7,6 +7,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from ..database import check_existing_data, init_db
+from ..errors import UserError
 from ..services.location import LocationService
 from ..services.metadata import MetadataService
 from ..ui import console
@@ -43,15 +44,18 @@ def init():
     
     if not location:
         console.print("\n[dim]📍 Manual location entry[/dim]")
-        query = Prompt.ask("[bold]City name[/bold]", default="London")
-        result = location_service.search_location(query)
-        if result:
-            city, lat, lon = result
-            console.print(f"[green]✓[/green] Found: [bold]{city}[/bold]")
-            location, latitude, longitude = city, lat, lon
-        else:
-            console.print("[yellow]⚠️  Using London as fallback[/yellow]")
-            location, latitude, longitude = "London", 51.5074, -0.1278
+        while not location:
+            query = Prompt.ask("[bold]City name[/bold]")
+            result = location_service.search_location(query)
+            if result:
+                city, lat, lon = result
+                console.print(f"[green]✓[/green] Found: [bold]{city}[/bold]")
+                location, latitude, longitude = city, lat, lon
+            else:
+                # Never guess a city: prayer times for the wrong place are wrong all day, every day.
+                console.print(f"[yellow]⚠️  Couldn't find '{query}' (or the lookup service is unreachable).[/yellow]")
+                if not Confirm.ask("Try another name?", default=True):
+                    raise UserError("A location is needed for prayer times. Run 'deen init' again when you can reach the network.")
     
     # Fetch calculation methods with location hint
     console.print("\n[dim]🕌 Fetching prayer calculation methods...[/dim]")

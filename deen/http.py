@@ -12,9 +12,11 @@ from typing import Any
 
 import httpx
 
+from . import __version__
+
 logger = logging.getLogger("deen.http")
 
-USER_AGENT = "deen-cli/0.1 (https://github.com/voltvirtuoso/deen-cli)"
+USER_AGENT = f"deen-cli/{__version__} (https://github.com/voltvirtuoso/deen-cli)"
 DEFAULT_TIMEOUT = 10.0
 
 

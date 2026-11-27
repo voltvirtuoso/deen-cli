@@ -206,6 +206,24 @@ class HadithMixin:
     # Helpers
     # ------------------------------------------------------------------
     @staticmethod
+    def _grade_of(h: Dict, collection: str) -> str:
+        """The grade the source itself gives, else a safe default.
+
+        The hadith API stores grades as a list (``"grades": [{"name": ..., "grade": ...}]``),
+        not a single ``grade`` string. Only the two Sahih collections are Sahih
+        by definition; for the other four an unlabelled narration is shown as
+        "Ungraded", never guessed as Hasan (they contain Da'if narrations too).
+        """
+        candidates = [h.get("grade")]
+        grades = h.get("grades")
+        if isinstance(grades, list):
+            candidates += [g.get("grade") if isinstance(g, dict) else g for g in grades]
+        for c in candidates:
+            if c and str(c).strip():
+                return str(c).strip()
+        return "Sahih" if collection in ("bukhari", "muslim") else "Ungraded"
+
+    @staticmethod
     def _flatten_hadiths(data: Dict) -> List[Dict]:
         hadiths = []
         for item in data.get("hadiths", []):
@@ -252,15 +270,7 @@ class HadithMixin:
         hadith_number = h.get("hadithnumber") or h.get("hadithNumber") or str(h.get("number", "N/A"))
         text = h.get("text", "Hadith text unavailable")
 
-        explicit_grade = str(h.get("grade", "")).strip().lower()
-        if "sahih" in explicit_grade:
-            grade = "Sahih"
-        elif "hasan" in explicit_grade:
-            grade = "Hasan"
-        elif collection in ["bukhari", "muslim"]:
-            grade = "Sahih"
-        else:
-            grade = "Hasan"
+        grade = self._grade_of(h, collection)
 
         reference = f"{collection.title().replace('Ibnmajah', 'Ibn Majah')} {hadith_number}"
 

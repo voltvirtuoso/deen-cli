@@ -70,6 +70,7 @@ def guard(fn: Callable, *, requires_init: bool = True) -> Callable:
 # ---------------------------------------------------------------------------
 Page = Annotated[int, typer.Option("--page", "-p", min=1, help="Page number to display.")]
 PerPage = Annotated[int, typer.Option("--per-page", min=1, max=50, help="Items per page (1-50).")]
+ShowAll = Annotated[bool, typer.Option("--all", "-a", help="Show every item in one scrollable view instead of page by page.")]
 Fresh = Annotated[bool, typer.Option("--fresh", "-f", help="Skip the cache and fetch new content.")]
 
 # The positional argument is always "what you're looking at":

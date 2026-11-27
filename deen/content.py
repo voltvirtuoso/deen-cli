@@ -4,7 +4,8 @@ import textwrap
 from typing import Callable, Dict, List, Optional
 
 from .arabic import prepare_arabic
-from .pager import page_text
+from .errors import UserError
+from .pager import is_interactive, page_text, read_nav_key
 from rich import box
 from rich.cells import cell_len
 from rich.console import Group
@@ -249,7 +250,7 @@ class ContentEngine:
             # fresh install with no network and no seeded content, which
             # shouldn't normally happen since init_db() always seeds a few
             # entries -- but we don't want to crash the render either way).
-            raise RuntimeError(
+            raise UserError(
                 "No ayah available: the Quran API is unreachable and no offline content is cached. "
                 "Check your connection and try again."
             )
@@ -278,7 +279,7 @@ class ContentEngine:
         """
         hadith = self.api.fetch_random_hadith(mood=mood, collection=category)
         if not hadith:
-            raise RuntimeError(
+            raise UserError(
                 "No hadith available: the hadith API is unreachable and no offline content is cached. "
                 "Check your connection and try again."
             )
@@ -304,7 +305,7 @@ class ContentEngine:
         """Get an authenticated dua from the Hisn al-Muslim collection."""
         dua = self.api.fetch_random_dua(category=category)
         if not dua:
-            raise RuntimeError(
+            raise UserError(
                 "No dua available: the dua API is unreachable, nothing is cached, and the "
                 "offline collection could not be read either."
             )
@@ -321,7 +322,7 @@ class ContentEngine:
         """Get every dua in a category (for `deen dua read <category>`)."""
         duas = self.api.fetch_duas_list(category)
         if not duas:
-            raise RuntimeError(
+            raise UserError(
                 f"No duas found for category '{category}' (API unreachable and nothing cached). "
                 "Run 'deen dua list' to see valid category numbers/shortcuts."
             )
@@ -331,7 +332,7 @@ class ContentEngine:
         """Get every hadith in a collection (for `deen hadith read <collection>`)."""
         hadiths = self.api.fetch_hadiths_list(collection)
         if not hadiths:
-            raise RuntimeError(
+            raise UserError(
                 f"No hadiths found for collection '{collection}' (API unreachable and nothing cached). "
                 "Valid collections: bukhari, muslim, tirmidhi, nasai, abudawud, ibnmajah."
             )
@@ -341,7 +342,7 @@ class ContentEngine:
         """Get every ayah in a surah (for `deen quran read <surah>`)."""
         ayahs = self.api.fetch_ayahs_by_surah(surah)
         if not ayahs:
-            raise RuntimeError(
+            raise UserError(
                 f"No ayahs found for surah '{surah}' (API unreachable, nothing cached, or not a "
                 "valid surah number 1-114). Run 'deen quran list' to see the full list."
             )
@@ -420,12 +421,14 @@ class ContentEngine:
             return "bold green"
         if "hasan" in grade_lower:
             return "bold yellow"
+        if "daif" in grade_lower or "da'if" in grade_lower or "weak" in grade_lower:
+            return "bold red"
         return "bold cyan"
 
     # ------------------------------------------------------------------
     # Paged list display
     # ------------------------------------------------------------------
-    def display_dua_list(self, category: str, page: int = 1, per_page: int = 10):
+    def display_dua_list(self, category: str, page: int = 1, per_page: int = 10, show_all: bool = False):
         """Read one page of duas from a category.
 
         Pages are printed directly so Windows terminals retain real Unicode
@@ -443,7 +446,7 @@ class ContentEngine:
                 source=dua["source"],
             )
 
-        self._page_through(duas, f"dua(s) \u2014 category: {category}", render, page, per_page)
+        self._page_through(duas, f"dua(s) \u2014 category: {category}", render, page, per_page, show_all)
 
     @staticmethod
     def filter_hadiths(
@@ -483,6 +486,7 @@ class ContentEngine:
         search: Optional[str] = None,
         category: Optional[str] = None,
         number: Optional[str] = None,
+        show_all: bool = False,
     ):
         """Read one page of hadiths from a collection using optional filters.
 
@@ -501,7 +505,7 @@ class ContentEngine:
             if category:
                 criteria.append(f"category '{category}'")
             detail = ", ".join(criteria) or "the supplied filters"
-            raise RuntimeError(f"No hadiths found in {collection} for {detail}.")
+            raise UserError(f"No hadiths found in {collection} for {detail}.")
 
         filter_label = ""
         if search:
@@ -527,9 +531,9 @@ class ContentEngine:
                 source=h["reference"],
             )
 
-        self._page_through(hadiths, f"hadith(s) \u2014 {collection}{filter_label}", render, page, per_page)
+        self._page_through(hadiths, f"hadith(s) \u2014 {collection}{filter_label}", render, page, per_page, show_all)
 
-    def display_ayah_list(self, surah: str, page: int = 1, per_page: int = 10):
+    def display_ayah_list(self, surah: str, page: int = 1, per_page: int = 10, show_all: bool = False):
         """Read one page of ayahs from a surah."""
         ayahs = self.list_ayahs(surah)
         surah_name = ayahs[0].get("surah_english") if ayahs else None
@@ -545,7 +549,7 @@ class ContentEngine:
                 source=a["id"],
             )
 
-        self._page_through(ayahs, label, render, page, per_page)
+        self._page_through(ayahs, label, render, page, per_page, show_all)
 
     def _page_through(
         self,
@@ -554,32 +558,72 @@ class ContentEngine:
         render_fn: Callable[[int, Dict], object],
         page: int = 1,
         per_page: int = 10,
+        show_all: bool = False,
     ):
-        """Render one manageable page through a Unicode-safe pager.
+        """Show ``items`` a page at a time, and keep going until the reader stops.
 
-        The pager prefers installed ``less`` and then ``bat``. Text is sent
-        through a UTF-8 pipe, avoiding the Windows ``pydoc.pager`` conversion
-        that produced literal ``\\u...`` escape sequences. If no external
-        pager exists, the built-in Windows fallback supports basic scrolling.
+        - At a terminal, after each page you choose what next: Enter/``n`` for the
+          next page, ``p`` for the previous one, ``q`` to stop. ``--page N`` is
+          just where you start.
+        - ``show_all`` puts every item in one scrollable pager.
+        - When output is piped or redirected there is nobody to ask, so exactly
+          the requested page (or everything, with ``show_all``) is written.
+
+        Each page goes through a UTF-8-safe pager (``less``, then ``bat``, then a
+        built-in one) rather than ``pydoc.pager``, which mangles Arabic on Windows.
         """
         if page < 1:
-            raise ValueError("--page must be 1 or greater")
+            raise UserError("--page must be 1 or greater.")
         if per_page < 1:
-            raise ValueError("--per-page must be 1 or greater")
-        total_pages = (len(items) + per_page - 1) // per_page
-        if page > total_pages:
-            raise ValueError(f"--page {page} is outside the available range 1-{total_pages}")
-
-        start = (page - 1) * per_page
-        selected = items[start:start + per_page]
-        end = start + len(selected)
-        with console.capture() as capture:
-            console.rule(
-                f"[bold]{label} • page {page}/{total_pages} • items {start + 1}-{end} of {len(items)}[/bold]"
+            raise UserError("--per-page must be 1 or greater.")
+        total_pages = max(1, (len(items) + per_page - 1) // per_page)
+        if page > total_pages and not show_all:
+            raise UserError(
+                f"--page {page} is outside the available range 1-{total_pages} "
+                f"({len(items)} items at {per_page} per page)."
             )
-            console.print("[dim]Use --page N to jump pages, --per-page N to change page size.[/dim]")
+
+        if show_all:
+            self._show_page(items, label, render_fn, start=0, end=len(items), heading=f"{label} \u2022 all {len(items)} items")
+            return
+
+        interactive = is_interactive() and total_pages > 1
+        while True:
+            start = (page - 1) * per_page
+            end = min(start + per_page, len(items))
+            self._show_page(
+                items, label, render_fn, start=start, end=end,
+                heading=f"{label} \u2022 page {page}/{total_pages} \u2022 items {start + 1}-{end} of {len(items)}",
+                hint=None if interactive else "Use --page N to jump pages, --all to show everything, --per-page N to change page size.",
+            )
+            if not interactive:
+                return
+
+            more = page < total_pages
+            keys = ["p previous"] if page > 1 else []
+            keys.insert(0, "Enter/n next" if more else "Enter/q done")
+            if more:
+                keys.append("q quit")
+            console.print(
+                f"[bold]Page {page}/{total_pages}[/bold] [dim]\u2022 {' \u2022 '.join(keys)}[/dim] ", end="", highlight=False
+            )
+            action = read_nav_key()
+            console.print()  # finish the prompt line
+            if action == "quit" or (action == "next" and not more):
+                return
+            if action == "next":
+                page += 1
+            elif action == "prev" and page > 1:
+                page -= 1
+
+    def _show_page(self, items, label, render_fn, *, start: int, end: int, heading: str, hint: Optional[str] = None):
+        """Render ``items[start:end]`` under a heading and send it to the pager."""
+        with console.capture() as capture:
+            console.rule(f"[bold]{heading}[/bold]")
+            if hint:
+                console.print(f"[dim]{hint}[/dim]")
             console.print()
-            for offset, item in enumerate(selected):
+            for offset, item in enumerate(items[start:end]):
                 console.print(render_fn(start + offset + 1, item))
                 console.print()
         page_text(capture.get())

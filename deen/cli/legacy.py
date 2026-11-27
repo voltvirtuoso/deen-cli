@@ -10,7 +10,7 @@ from typing import Optional
 
 import typer
 
-from ._common import Page, PerPage, deprecated
+from ._common import Page, PerPage, ShowAll, deprecated
 from .app import command
 from .dua import show_dua_categories, show_duas
 from .hadith import show_hadiths, show_sections
@@ -31,13 +31,14 @@ def read_surah(
     surah: Optional[str] = typer.Option(None, "--surah", "-s"),
     page: Page = 1,
     per_page: PerPage = 10,
+    all_: ShowAll = False,
 ):
     """Deprecated: use `deen quran read`."""
     deprecated("read-surah", "quran read")
     number = surah or surah_arg
     if not number:
         raise UserError("Provide a surah number, e.g. 'deen quran read 101'.")
-    show_surah(number, page, per_page)
+    show_surah(number, page, per_page, all_)
 
 
 @command("categories", hidden=True)
@@ -52,10 +53,11 @@ def read_dua(
     category: str = typer.Option(..., "--category", "-c"),
     page: Page = 1,
     per_page: PerPage = 10,
+    all_: ShowAll = False,
 ):
     """Deprecated: use `deen dua read`."""
     deprecated("read-dua", "dua read")
-    show_duas(category, page, per_page)
+    show_duas(category, page, per_page, all_)
 
 
 @command("hadith-categories", hidden=True)
@@ -73,7 +75,8 @@ def read_hadith(
     number: Optional[str] = typer.Option(None, "--number", "-n"),
     page: Page = 1,
     per_page: PerPage = 10,
+    all_: ShowAll = False,
 ):
     """Deprecated: use `deen hadith read`."""
     deprecated("read-hadith", "hadith read")
-    show_hadiths(collection, page, per_page, search, category, number)
+    show_hadiths(collection, page, per_page, search, category, number, all_)

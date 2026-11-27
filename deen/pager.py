@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import sys
 
+import click
+
 
 def _run_external(command: str, args: list[str], content: str) -> bool:
     """Send UTF-8 content directly to an installed pager."""
@@ -78,6 +80,39 @@ def _interactive_fallback(content: str) -> None:
     sys.stdout.flush()
 
 
+def is_interactive() -> bool:
+    """True when a person is at the keyboard (stdin and stdout are both a terminal)."""
+    return bool(sys.stdin.isatty() and sys.stdout.isatty())
+
+
+# Keys -> navigation action. Arrow keys arrive as escape sequences on Unix and as
+# two-character codes on Windows, so the sequences are listed explicitly.
+_NEXT_KEYS = {"\r", "\n", " ", "n", "N", "j", "\x1b[C", "\x1b[B", "\xe0M", "\x00M", "\xe0P", "\x00P"}
+_PREV_KEYS = {"p", "P", "b", "B", "k", "\x1b[D", "\x1b[A", "\xe0K", "\x00K", "\xe0H", "\x00H"}
+_QUIT_KEYS = {"q", "Q", "\x1b"}
+
+
+def read_nav_key() -> str:
+    """Block for one key press and return ``"next"``, ``"prev"`` or ``"quit"``.
+
+    Unrecognised keys are ignored (we keep waiting) so a stray key never jumps a
+    page. Ctrl-C quits cleanly instead of printing a traceback.
+    """
+    while True:
+        try:
+            key = click.getchar()
+        except (KeyboardInterrupt, EOFError):
+            return "quit"
+        if key == "\x03":  # Ctrl-C arrives as a character in raw mode
+            return "quit"
+        if key in _NEXT_KEYS:
+            return "next"
+        if key in _PREV_KEYS:
+            return "prev"
+        if key in _QUIT_KEYS:
+            return "quit"
+
+
 def page_text(content: str) -> None:
     """Display content in an interactive less/bat-like pager.
 
@@ -89,13 +124,13 @@ def page_text(content: str) -> None:
     """
     if not content:
         return
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
+    if not is_interactive():
         sys.stdout.write(content)
         sys.stdout.flush()
         return
 
     less = shutil.which("less")
-    if less and _run_external(less, ["-R"], content):
+    if less and _run_external(less, ["-F", "-R", "-X"], content):
         return
 
     bat = shutil.which("bat")

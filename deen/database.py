@@ -1,5 +1,6 @@
 """SQLite database management with authenticated fallback content ONLY."""
 import logging
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -11,6 +12,16 @@ from .config import DeenConfig
 from .errors import UserError
 
 logger = logging.getLogger("deen.database")
+
+
+# Commits are stored as "YYYY-MM-DD HH:MM:SS". Compare against that exact format:
+# datetime.isoformat() uses a "T" separator, and since "T" sorts after " " every
+# commit on the cutoff's own date compared as *older* than the cutoff.
+_TS_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def _ts(dt: datetime) -> str:
+    return dt.strftime(_TS_FORMAT)
 
 
 def get_db_path() -> Path:
@@ -397,10 +408,10 @@ def get_recent_commits(days: int = 7) -> list:
             SELECT c.id, c.timestamp, h.name, c.note, c.is_makeup
             FROM commits c
             JOIN habits h ON c.habit_id = h.id
-            WHERE c.timestamp > ?
+            WHERE c.timestamp >= ?
             ORDER BY c.timestamp DESC
             """,
-            (since.isoformat(),),
+            (_ts(since),),
         )
         return cursor.fetchall()
 
@@ -416,30 +427,32 @@ def get_today_prayer_count() -> dict:
             FROM commits c
             JOIN habits h ON c.habit_id = h.id
             WHERE h.type = 'prayer'
-            AND c.timestamp > ?
+            AND c.timestamp >= ?
             GROUP BY h.name
             """,
-            (today_start.isoformat(),),
+            (_ts(today_start),),
         )
         rows = cursor.fetchall()
         return {row[0]: row[1] for row in rows}
 
 
-def normalize_prayer_name(input_str: str) -> str:
+_PRAYER_ALIASES = (
+    ("Fajr", {"fajr", "fajar", "sehri", "suhur", "morning"}),
+    ("Dhuhr", {"dhuhr", "duhr", "zuhr", "zohr", "zuhar", "duhar", "midday", "noon"}),
+    ("Asr", {"asr", "asar", "afternoon"}),
+    ("Maghrib", {"maghrib", "magrib", "sunset", "evening"}),
+    ("Isha", {"isha", "ishaa", "night"}),
+)
+
+
+def normalize_prayer_name(input_str: str) -> Optional[str]:
     """Map prayer name variations (including common regional spellings) to canonical names."""
-    input_lower = input_str.strip().lower()
-
-    if any(x in input_lower for x in ["fajr", "fajar", "sehri", "suhur", "morning"]):
-        return "Fajr"
-    if any(x in input_lower for x in ["dhuhr", "duhr", "zuhr", "zohr", "zuhar", "duhar", "midday", "noon"]):
-        return "Dhuhr"
-    if any(x in input_lower for x in ["asr", "asar", "afternoon"]):
-        return "Asr"
-    if any(x in input_lower for x in ["maghrib", "magrib", "sunset", "evening"]):
-        return "Maghrib"
-    if any(x in input_lower for x in ["isha", "ishaa", "night"]):
-        return "Isha"
-
+    # Whole words only. Substring matching made "afternoon" hit "noon" (Dhuhr)
+    # before it could reach "afternoon" (Asr).
+    words = set(re.findall(r"[a-z]+", input_str.lower()))
+    for prayer, aliases in _PRAYER_ALIASES:
+        if words & aliases:
+            return prayer
     return None  # Not a recognized prayer name
 
 

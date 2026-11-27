@@ -1,7 +1,7 @@
 """Habit commands: status (prayer times), commit, log."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import typer
 from rich import box
@@ -37,8 +37,10 @@ def status():
     if not lat or not lon:
         raise UserError("Location not set. Run 'deen init' to configure.")
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    fetched = ApiService(config).fetch_prayer_times(float(lat), float(lon), today)
+    api = ApiService(config)
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    fetched = api.fetch_prayer_times(float(lat), float(lon), today)
     prayers = fetched.data
     if not prayers:
         console.print(
@@ -51,25 +53,33 @@ def status():
         console.print("[yellow]⚠️  API unreachable — showing the last cached prayer times (may be outdated).[/yellow]")
 
     prayer_status = get_today_prayer_status()
-    now = datetime.now()
-    current_time = now.strftime("%H:%M")
     shown = [(name, t) for name, t in prayers.items() if name in PRAYERS_SHOWN]
-    next_prayer = next(((name, t) for name, t in shown if t > current_time), None)
+
+    def at(day: date, hhmm: str) -> datetime:
+        return datetime.combine(day, datetime.strptime(hhmm, "%H:%M").time())
+
+    next_today = next(((name, at(now.date(), t)) for name, t in shown if at(now.date(), t) > now), None)
+    next_prayer = next_today
+    if next_prayer is None:
+        # Past Isha: the next prayer is tomorrow's Fajr, not "nothing".
+        tomorrow = now.date() + timedelta(days=1)
+        tomorrow_times = api.fetch_prayer_times(float(lat), float(lon), tomorrow.strftime("%Y-%m-%d")).data
+        if tomorrow_times and tomorrow_times.get("Fajr"):
+            next_prayer = ("Fajr", at(tomorrow, tomorrow_times["Fajr"]))
 
     table = Table(show_header=False, box=None)
     table.add_column(style="cyan", width=12)
     table.add_column(style="green", justify="right", width=8)
     for name, time_str in shown:
         icon = "[bold green]✓[/bold green]" if prayer_status.get(name, False) else "[dim]○[/dim]"
-        is_next = next_prayer is not None and name == next_prayer[0]
+        is_next = next_today is not None and name == next_today[0]
         table.add_row(
             f"[bold]{name} {icon}[/bold]" if is_next else f"{name} {icon}",
             f"[bold green]{time_str}[/bold green]" if is_next else time_str,
         )
 
     if next_prayer:
-        delta = datetime.strptime(next_prayer[1], "%H:%M") - datetime.strptime(current_time, "%H:%M")
-        secs = delta.seconds
+        secs = max(0, int((next_prayer[1] - now).total_seconds()))
         countdown = f"{secs // 3600:02d}:{(secs % 3600) // 60:02d}:{secs % 60:02d}"
         console.print(f"\n[bold]Next:[/bold] {next_prayer[0]} in [green]{countdown}[/green]")
 

@@ -10,7 +10,7 @@ from ..arabic import prepare_arabic
 from ..content import ContentEngine
 from ..services.api import ApiService
 from ..ui import console
-from ._common import Fresh, Page, PerPage, SurahArg, get_config
+from ._common import Fresh, Page, PerPage, ShowAll, SurahArg, get_config
 from .app import command, quran_app
 
 
@@ -45,8 +45,8 @@ def show_surah_list() -> None:
     console.print("\n[dim]💡 deen quran read <#> to page through a whole surah.[/dim]")
 
 
-def show_surah(surah: str, page: int, per_page: int) -> None:
-    ContentEngine(get_config()).display_ayah_list(surah, page=page, per_page=per_page)
+def show_surah(surah: str, page: int, per_page: int, show_all: bool = False) -> None:
+    ContentEngine(get_config()).display_ayah_list(surah, page=page, per_page=per_page, show_all=show_all)
 
 
 @command("list", target=quran_app)
@@ -60,9 +60,13 @@ def quran_list():
 
 
 @command("read", target=quran_app)
-def quran_read(surah: SurahArg, page: Page = 1, per_page: PerPage = 10):
-    """Read a surah ten ayahs at a time (use --page / --per-page to move)."""
-    show_surah(surah, page, per_page)
+def quran_read(surah: SurahArg, page: Page = 1, per_page: PerPage = 10, all_: ShowAll = False):
+    """Read a surah ten ayahs at a time.
+
+    At a terminal, press Enter for the next page, p for the previous, q to stop;
+    or use --all, --page and --per-page.
+    """
+    show_surah(surah, page, per_page, all_)
 
 
 @command("random", target=quran_app)

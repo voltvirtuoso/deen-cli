@@ -10,7 +10,7 @@ from ..content import ContentEngine
 from ..errors import UserError
 from ..services.api import HADITH_COLLECTIONS, MOOD_KEYWORDS, ApiService
 from ..ui import console
-from ._common import CollectionArg, Fresh, Page, PerPage, get_config
+from ._common import CollectionArg, Fresh, Page, PerPage, ShowAll, get_config
 from .app import command, hadith_app
 
 VALID_MOODS = list(MOOD_KEYWORDS)
@@ -59,7 +59,7 @@ def show_sections(collection: str) -> None:
     console.print(f"\n[dim]Example: deen hadith read {collection} --section 1[/dim]")
 
 
-def show_hadiths(collection: str, page: int, per_page: int, search, section, number) -> None:
+def show_hadiths(collection: str, page: int, per_page: int, search, section, number, show_all: bool = False) -> None:
     ContentEngine(get_config()).display_hadith_list(
         collection.strip().lower(),
         page=page,
@@ -67,6 +67,7 @@ def show_hadiths(collection: str, page: int, per_page: int, search, section, num
         search=search,
         category=section,
         number=number,
+        show_all=show_all,
     )
 
 
@@ -90,9 +91,13 @@ def hadith_read(
     search: Optional[str] = typer.Option(None, "--search", help="Search English text, narrator, or section title."),
     page: Page = 1,
     per_page: PerPage = 10,
+    all_: ShowAll = False,
 ):
-    """Read a collection ten hadiths at a time; filter by section, number or text."""
-    show_hadiths(collection, page, per_page, search, section, number)
+    """Read a collection ten hadiths at a time; filter by section, number or text.
+
+    At a terminal, press Enter for the next page, p for the previous, q to stop.
+    """
+    show_hadiths(collection, page, per_page, search, section, number, all_)
 
 
 @command("random", target=hadith_app)

@@ -76,7 +76,7 @@ class CommandSeparationTests(unittest.TestCase):
             ):
                 result = CliRunner().invoke(app, argv)
             self.assertEqual(result.exit_code, 0, result.stdout)
-            engine.display_ayah_list.assert_called_once_with("101", page=1, per_page=5)
+            engine.display_ayah_list.assert_called_once_with("101", page=1, per_page=5, show_all=False)
 
     def test_positional_scope_is_forwarded_the_same_way_for_all_random_commands(self):
         cases = [

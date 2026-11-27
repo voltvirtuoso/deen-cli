@@ -11,7 +11,7 @@ from ..errors import UserError
 from ..services.api import ApiService
 from ..services.dua import search_dua_categories
 from ..ui import console
-from ._common import CategoryArg, Fresh, Page, PerPage, get_config
+from ._common import CategoryArg, Fresh, Page, PerPage, ShowAll, get_config
 from .app import command, dua_app
 
 
@@ -80,8 +80,10 @@ def show_dua_categories(search: Optional[str] = None) -> None:
     console.print("\n[dim]💡 deen dua read <category> to read one; deen dua random for a random dua.[/dim]")
 
 
-def show_duas(category: str, page: int, per_page: int) -> None:
-    ContentEngine(get_config()).display_dua_list(resolve_category(category), page=page, per_page=per_page)
+def show_duas(category: str, page: int, per_page: int, show_all: bool = False) -> None:
+    ContentEngine(get_config()).display_dua_list(
+        resolve_category(category), page=page, per_page=per_page, show_all=show_all
+    )
 
 
 @command("list", target=dua_app)
@@ -99,13 +101,14 @@ def dua_list(
 
 
 @command("read", target=dua_app)
-def dua_read(category: CategoryArg, page: Page = 1, per_page: PerPage = 10):
+def dua_read(category: CategoryArg, page: Page = 1, per_page: PerPage = 10, all_: ShowAll = False):
     """Read a dua category ten items at a time.
 
     CATEGORY can be a number (`26`), a shortcut (`morning`, `forgiveness`) or part of a
-    title (`istikhara`, `sleep`). Use --page / --per-page to move.
+    title (`istikhara`, `sleep`). At a terminal, press Enter for the next page, p for
+    the previous, q to stop; or use --all, --page and --per-page.
     """
-    show_duas(category, page, per_page)
+    show_duas(category, page, per_page, all_)
 
 
 @command("random", target=dua_app)

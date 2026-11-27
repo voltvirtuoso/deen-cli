@@ -147,7 +147,12 @@ adhan, debt, …) is found by name: `deen dua read istikhara` resolves to chapte
 If a name matches several chapters you get the list and pick one by number.
 The same lookup works for `deen dua random <name>` and `deen inspire -t dua -c <name>`.
 
-Shared options on every `read`: `--page`, `--per-page` (default 10). Shared on
+Shared options on every `read`: `--page`, `--per-page` (default 10) and `--all`
+(everything in one scrollable view). At a terminal, a `read` keeps going after
+each page: **Enter** (or `n`) for the next page, **`p`** for the previous, **`q`**
+to stop; `--page N` is just where you start. When output is piped or redirected
+there is no one to ask, so you get exactly the requested page (or everything
+with `--all`). Shared on
 every `random`: `-f/--fresh`. `hadith read` also takes `--section` (number or
 part of the title), `--number/-n` and `--search` (case-insensitive across the
 English text, narrator and section title). `hadith random` takes `--mood/-m`:
@@ -155,7 +160,8 @@ stressed, anxious, grateful, sad, angry, lonely, tired, doubtful. No source tags
 hadith by mood, so this keyword-matches real authenticated text and says so
 when nothing matches.
 
-Each page of a `read` opens in an interactive `less` pager when available, then
+Each page of a `read` opens in an interactive `less` pager (quits by itself if it
+fits one screen) when available, then
 `bat`, with a built-in scrolling fallback. Pager input uses a UTF-8 pipe so
 Arabic and other Unicode characters remain intact on Windows.
 

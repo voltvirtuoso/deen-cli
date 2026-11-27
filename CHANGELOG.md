@@ -7,6 +7,38 @@ and versioning follows [Semantic Versioning](https://semver.org/) —
 `MAJOR.MINOR.PATCH`, where MAJOR = breaking changes, MINOR = backward-compatible
 features/fixes, PATCH = backward-compatible bug fixes only.
 
+## [0.5.1] - 2026-11-27
+
+### Fixed
+- **`read` stopped after the first ten items** (e.g. `deen dua read morning` showed
+  "items 1-10 of 31" and exited, with no way to continue except re-running with
+  `--page 2`). At a terminal each page is now followed by a prompt: Enter/`n` next,
+  `p` previous, `q` quit. `--page N` sets the starting page. Applies to
+  `quran read`, `hadith read`, `dua read` and their old aliases.
+- `deen log --days N` and the daily prayer count missed commits on the cutoff date
+  (timestamps were compared as `...T...` against stored `... ...`).
+- Prayer detection in `deen commit -t salah -m "..."` matched substrings, so
+  "afternoon" was logged as Dhuhr (it contains "noon"). Whole words only now.
+- Hadith outside Bukhari/Muslim were all labelled "Hasan" whether or not a grade
+  existed; the source's own grade list is now read, and anything ungraded shows
+  "Ungraded". Da'if grades are shown in red.
+- `deen status` showed no "Next:" line after Isha; it now counts down to tomorrow's
+  Fajr, and the countdown uses real seconds.
+- `deen init` silently fell back to London when a city lookup failed (wrong prayer
+  times with no obvious cause); it now asks you to try again.
+- Out-of-range `--page` and "nothing found / API unreachable" messages are now the
+  same yellow ⚠️ warning as every other input problem (they were red errors).
+- The HTTP User-Agent reported `deen-cli/0.1`; it now follows the real version.
+
+### Added
+- `--all` / `-a` on every `read` command: show everything in one scrollable view.
+- `less` is now started with `-FRX`: no pager for a single screenful, and the text
+  stays on screen after you quit.
+
+### Removed
+- `deen/cli/content.py`, the pre-refactor module (it no longer imported), and the
+  empty `deen/utils.py` the 0.5.0 notes already listed as removed.
+
 ## [0.5.0] - 2026-11-07
 
 ### Added
